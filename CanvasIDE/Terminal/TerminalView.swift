@@ -10,6 +10,12 @@ final class TerminalView: NSView {
     private(set) var surface: ghostty_surface_t?
     private var hasSurface: Bool { surface != nil }
 
+    /// The unzoomed canvas-coordinate size of this terminal's content area.
+    /// Set by CanvasNode.updateContentZoom() when zoom changes.
+    var canvasSize: CGSize = .zero {
+        didSet { updateSurfaceSize() }
+    }
+
     // MARK: - NSView Overrides
 
     override var isFlipped: Bool { true }
@@ -104,11 +110,21 @@ final class TerminalView: NSView {
     private func updateSurfaceSize() {
         guard let surface else { return }
         let scale = window?.backingScaleFactor ?? 2.0
-        let w = UInt32(bounds.width  * scale)
-        let h = UInt32(bounds.height * scale)
+
+        // Use canvas-coordinate size (unzoomed) if available, otherwise fall back to bounds
+        let effectiveSize = canvasSize.width > 0 ? canvasSize : bounds.size
+        let w = UInt32(effectiveSize.width * scale)
+        let h = UInt32(effectiveSize.height * scale)
         guard w > 0, h > 0 else { return }
-        // TODO: verify ghostty_surface_set_size exists in linked GhosttyKit version
+
         ghostty_surface_set_size(surface, w, h)
+        ghostty_surface_set_content_scale(surface, scale, scale)
+
+        // Set Metal layer drawable size to unzoomed pixel dimensions so
+        // Ghostty renders at full resolution even when the frame is zoomed down.
+        if let metalLayer = layer as? CAMetalLayer {
+            metalLayer.drawableSize = CGSize(width: CGFloat(w), height: CGFloat(h))
+        }
     }
 
     // MARK: - Focus

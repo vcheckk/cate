@@ -340,9 +340,20 @@ final class CanvasNode: NSView {
     /// and browser content visually scale with canvas zoom. Uses sublayerTransform
     /// which scales child layers without affecting Auto Layout or bounds.
     func updateContentZoom(_ zoomLevel: Double) {
-        // No-op: content scales naturally with the frame size.
-        // Terminal reflows to available columns/rows — this is standard behavior.
-        // True visual zoom scaling would require Ghostty font-size changes at runtime.
+        guard zoomLevel > 0 else { return }
+        let containerFrame = contentContainer.frame
+        guard containerFrame.width > 0, containerFrame.height > 0 else { return }
+        let unzoomedSize = CGSize(
+            width: containerFrame.width / zoomLevel,
+            height: containerFrame.height / zoomLevel
+        )
+        // Pass the unzoomed canvas-coordinate size to TerminalView children
+        // so Ghostty renders at full resolution (text scales visually with zoom)
+        for subview in contentContainer.subviews {
+            if let terminal = subview as? TerminalView {
+                terminal.canvasSize = unzoomedSize
+            }
+        }
     }
 
     // MARK: Content

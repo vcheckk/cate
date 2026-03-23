@@ -29,19 +29,8 @@ final class TerminalView: NSView {
         }
     }
 
-    /// Current canvas zoom level. Used to set the Metal layer's contentsScale
-    /// so text renders at the correct pixel density (avoids pixelation when zoomed in).
-    var canvasZoom: Double = 1.0 {
-        didSet {
-            let backing = window?.backingScaleFactor ?? 2.0
-            let scale = backing * max(canvasZoom, 1.0)
-            if let metalLayer = layer as? CAMetalLayer {
-                metalLayer.contentsScale = scale
-            } else {
-                layer?.contentsScale = scale
-            }
-        }
-    }
+    /// Current canvas zoom level (informational, not used for rendering).
+    var canvasZoom: Double = 1.0
 
     // MARK: - NSView Overrides
 

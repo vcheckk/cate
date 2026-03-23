@@ -193,6 +193,8 @@ final class LineNumberView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override var isFlipped: Bool { true }
+
     @objc private func textDidScroll(_ note: Notification) {
         needsDisplay = true
     }

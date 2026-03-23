@@ -96,6 +96,11 @@ final class TerminalView: NSView {
         updateSurfaceSize()
     }
 
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        updateSurfaceSize()
+    }
+
     private func updateSurfaceSize() {
         guard let surface else { return }
         let scale = window?.backingScaleFactor ?? 2.0

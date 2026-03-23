@@ -14,6 +14,13 @@ final class CanvasNodeTitleBar: NSView {
     /// Called when the drag gesture ends.
     var onDragEnd: (() -> Void)?
 
+    /// Called when the close button is clicked.
+    var onClose: (() -> Void)?
+
+    /// Called when the title bar receives a mouseDown (but not on the close button).
+    /// Used to focus the node even before a drag begins.
+    var onMouseDown: (() -> Void)?
+
     // MARK: Private state
 
     private let panelType: PanelType
@@ -152,14 +159,14 @@ final class CanvasNodeTitleBar: NSView {
     // MARK: Close action
 
     @objc private func closeButtonClicked() {
-        // Propagate up the responder chain — parent CanvasNode can intercept
-        nextResponder?.tryToPerform(#selector(CanvasNodeTitleBar.closeButtonClicked), with: self)
+        onClose?()
     }
 
     // MARK: Mouse drag handling
 
     override func mouseDown(with event: NSEvent) {
         mouseDownLocation = event.locationInWindow
+        onMouseDown?()
 
         if event.clickCount == 2 {
             handleDoubleClick()

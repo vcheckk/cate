@@ -55,13 +55,10 @@ final class CanvasView: NSView {
     }
 
     private func drawGrid(in dirtyRect: NSRect) {
+        guard canvasState.gridStyle != .blank else { return }
         guard let context = NSGraphicsContext.current?.cgContext else { return }
 
         let gridSize: CGFloat = 20.0
-        let dotRadius: CGFloat = 1.0
-        let dotAlpha: CGFloat = 0.15
-
-        context.setFillColor(NSColor.white.withAlphaComponent(dotAlpha).cgColor)
 
         // Convert dirtyRect bounds to canvas coords to determine which grid lines are visible
         let topLeft = canvasState.viewToCanvas(CGPoint(x: dirtyRect.minX, y: dirtyRect.minY))
@@ -70,21 +67,50 @@ final class CanvasView: NSView {
         let startX = (floor(topLeft.x / gridSize) * gridSize)
         let startY = (floor(topLeft.y / gridSize) * gridSize)
 
-        var canvasY = startY
-        while canvasY <= bottomRight.y {
+        switch canvasState.gridStyle {
+        case .blank:
+            break
+
+        case .dots:
+            let dotRadius: CGFloat = 1.0
+            context.setFillColor(NSColor.white.withAlphaComponent(0.15).cgColor)
+            var canvasY = startY
+            while canvasY <= bottomRight.y {
+                var canvasX = startX
+                while canvasX <= bottomRight.x {
+                    let viewPoint = canvasState.canvasToView(CGPoint(x: canvasX, y: canvasY))
+                    let dotRect = CGRect(
+                        x: viewPoint.x - dotRadius,
+                        y: viewPoint.y - dotRadius,
+                        width: dotRadius * 2,
+                        height: dotRadius * 2
+                    )
+                    context.fillEllipse(in: dotRect)
+                    canvasX += gridSize
+                }
+                canvasY += gridSize
+            }
+
+        case .lines:
+            context.setStrokeColor(NSColor.white.withAlphaComponent(0.06).cgColor)
+            context.setLineWidth(0.5)
+            // Vertical lines
             var canvasX = startX
             while canvasX <= bottomRight.x {
-                let viewPoint = canvasState.canvasToView(CGPoint(x: canvasX, y: canvasY))
-                let dotRect = CGRect(
-                    x: viewPoint.x - dotRadius,
-                    y: viewPoint.y - dotRadius,
-                    width: dotRadius * 2,
-                    height: dotRadius * 2
-                )
-                context.fillEllipse(in: dotRect)
+                let viewX = canvasState.canvasToView(CGPoint(x: canvasX, y: 0)).x
+                context.move(to: CGPoint(x: viewX, y: dirtyRect.minY))
+                context.addLine(to: CGPoint(x: viewX, y: dirtyRect.maxY))
                 canvasX += gridSize
             }
-            canvasY += gridSize
+            // Horizontal lines
+            var canvasY = startY
+            while canvasY <= bottomRight.y {
+                let viewY = canvasState.canvasToView(CGPoint(x: 0, y: canvasY)).y
+                context.move(to: CGPoint(x: dirtyRect.minX, y: viewY))
+                context.addLine(to: CGPoint(x: dirtyRect.maxX, y: viewY))
+                canvasY += gridSize
+            }
+            context.strokePath()
         }
     }
 

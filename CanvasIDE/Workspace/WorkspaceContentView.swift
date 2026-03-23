@@ -221,13 +221,35 @@ struct CanvasViewRepresentable: NSViewRepresentable {
                 )
                 canvasNode.addGestureRecognizer(click)
 
+                // Wire close button → remove panel from workspace
+                let capturedWorkspace = workspace
+                canvasNode.titleBar.onClose = { [weak capturedWorkspace] in
+                    capturedWorkspace?.closePanel(panelId)
+                }
+
                 // Wire title bar drag → move node on canvas
                 let capturedNodeId = nodeId
                 let capturedState = workspace.canvasState
+
+                // Wire title bar mouseDown → focus node (handles click-to-focus before drag)
+                canvasNode.titleBar.onMouseDown = { [weak capturedState] in
+                    capturedState?.focusNode(capturedNodeId)
+                }
+
+                // Wire content-area mouseDown on unfocused node → focus (for browser/editor/terminal)
+                canvasNode.onFocusRequest = { [weak capturedState] in
+                    capturedState?.focusNode(capturedNodeId)
+                }
+
+                // Wire title bar drag → move node on canvas
                 canvasNode.titleBar.onDrag = { [weak self, weak capturedState, weak canvasView] delta in
                     self?.isDragging = true
                     guard let state = capturedState,
                           let current = state.nodes[capturedNodeId] else { return }
+                    // Focus the node when drag starts (title bar click on unfocused node)
+                    if state.focusedNodeId != capturedNodeId {
+                        state.focusNode(capturedNodeId)
+                    }
                     let zoom = state.zoomLevel > 0 ? state.zoomLevel : 1.0
                     let newOrigin = CGPoint(
                         x: current.origin.x + delta.dx / zoom,

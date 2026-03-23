@@ -16,6 +16,12 @@ enum CanvasNavigationDirection {
     case left, right, up, down
 }
 
+enum CanvasGridStyle: String, Codable {
+    case blank
+    case lines
+    case dots
+}
+
 struct CanvasNodeState {
     let id: CanvasNodeID
     let panelId: UUID
@@ -37,6 +43,7 @@ final class CanvasState: ObservableObject {
     @Published var focusedNodeId: CanvasNodeID?
     @Published var isInteractive: Bool = true
     @Published var minimapVisible: Bool = true
+    @Published var gridStyle: CanvasGridStyle = .lines
 
     private var nextCreationIndex: Int = 0
     private var nextZOrder: Int = 0

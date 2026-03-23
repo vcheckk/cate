@@ -165,6 +165,8 @@ final class CanvasNode: NSView {
     let titleBar: CanvasNodeTitleBar
     private let contentContainer: NSView
     private let resizeHandle: ResizeHandle = ResizeHandle()
+    /// Semi-transparent overlay shown on unfocused nodes to visually dim the content.
+    private let dimOverlay: NSView = NSView()
 
     // MARK: Constants
 
@@ -172,8 +174,8 @@ final class CanvasNode: NSView {
     private static let cornerRadius: CGFloat = 8
     private static let backgroundColor = NSColor(red: 0x1E / 255.0, green: 0x1E / 255.0, blue: 0x24 / 255.0, alpha: 1.0)
     private static let borderColorFocused = NSColor(red: 0x4A / 255.0, green: 0x9E / 255.0, blue: 0xFF / 255.0, alpha: 1.0)
-    private static let borderColorDefault = NSColor(white: 1.0, alpha: 0.10)
-    private static let borderWidth: CGFloat = 2
+    private static let borderColorDefault = NSColor(white: 1.0, alpha: 0.18)
+    private static let borderWidth: CGFloat = 3
 
     // MARK: Hover tracking
 
@@ -208,13 +210,18 @@ final class CanvasNode: NSView {
         layer?.cornerRadius = Self.cornerRadius
         layer?.masksToBounds = false // allow shadow to show outside bounds
 
+        // The border is drawn on self.layer, but CALayer borders are rendered
+        // INSIDE the bounds, so a clip view filling 100% would cover them.
+        // Inset the clip view by borderWidth so the border ring is visible.
+        let inset = Self.borderWidth
+
         // Use a clip view for the actual masked content
         let clipView = NSView()
         clipView.wantsLayer = true
-        clipView.layer?.cornerRadius = Self.cornerRadius
+        clipView.layer?.cornerRadius = max(0, Self.cornerRadius - inset)
         clipView.layer?.masksToBounds = true
 
-        // Background layer
+        // Background on self (shows as border background)
         layer?.backgroundColor = Self.backgroundColor.cgColor
 
         // Content clip layer
@@ -222,10 +229,10 @@ final class CanvasNode: NSView {
         clipView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(clipView)
         NSLayoutConstraint.activate([
-            clipView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            clipView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            clipView.topAnchor.constraint(equalTo: topAnchor),
-            clipView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            clipView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            clipView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            clipView.topAnchor.constraint(equalTo: topAnchor, constant: inset),
+            clipView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
         ])
 
         // Title bar
@@ -250,11 +257,22 @@ final class CanvasNode: NSView {
             contentContainer.bottomAnchor.constraint(equalTo: clipView.bottomAnchor),
         ])
 
+        // Dim overlay — sits above content, below title bar, to indicate unfocused state
+        dimOverlay.wantsLayer = true
+        dimOverlay.layer?.backgroundColor = NSColor(white: 0, alpha: 0.15).cgColor
+        dimOverlay.translatesAutoresizingMaskIntoConstraints = false
+        dimOverlay.isHidden = false  // shown when unfocused; hidden when focused
+        // Add to clipView so it is masked along with content
+        clipView.addSubview(dimOverlay)
+        NSLayoutConstraint.activate([
+            dimOverlay.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            dimOverlay.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            dimOverlay.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            dimOverlay.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+        ])
+
         // Resize handle — added directly to self so it sits above the clip mask
         addSubview(resizeHandle)
-
-        // Border layer drawn on top of clip view (not clipped)
-        wantsLayer = true
 
         updateAppearance()
         updateResizeHandleVisibility()
@@ -295,6 +313,9 @@ final class CanvasNode: NSView {
         let borderColor = isFocused ? Self.borderColorFocused : Self.borderColorDefault
         layer?.borderColor = borderColor.cgColor
         layer?.borderWidth = Self.borderWidth
+
+        // Dim overlay hides when focused, shows when unfocused
+        dimOverlay.isHidden = isFocused
 
         if isFocused {
             layer?.shadowColor = NSColor(red: 0x4A / 255.0, green: 0x9E / 255.0, blue: 0xFF / 255.0, alpha: 0.35).cgColor
@@ -375,6 +396,18 @@ final class CanvasNode: NSView {
         }
 
         return nil
+    }
+
+    /// Called when an unfocused node's content area is clicked directly.
+    /// We handle focus here so clicking the browser or any content immediately
+    /// focuses the node without relying solely on the gesture recognizer.
+    var onFocusRequest: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        if !isFocused {
+            onFocusRequest?()
+        }
+        // Don't call super — let the gesture recognizer chain handle it.
     }
 
     /// When unfocused, forward scroll events to the superview (canvas) so the

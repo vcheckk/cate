@@ -344,21 +344,16 @@ final class CanvasNode: NSView {
         let containerFrame = contentContainer.frame
         guard containerFrame.width > 0, containerFrame.height > 0 else { return }
 
+        // Always lock terminal bounds to the unzoomed canvas size.
+        // Ghostty renders once at 1x; AppKit scales via frame/bounds ratio.
+        // Same cols/rows at all zoom levels — like zooming in Figma/Miro.
+        let unzoomedSize = CGSize(
+            width: containerFrame.width / zoomLevel,
+            height: containerFrame.height / zoomLevel
+        )
         for subview in contentContainer.subviews {
-            guard let terminal = subview as? TerminalView else { continue }
-
-            if zoomLevel < 0.99 {
-                // Zoomed OUT: setBoundsSize to unzoomed canvas size so Ghostty
-                // renders at 1x and AppKit scales down (lossless, no reflow)
-                let unzoomedSize = CGSize(
-                    width: containerFrame.width / zoomLevel,
-                    height: containerFrame.height / zoomLevel
-                )
+            if let terminal = subview as? TerminalView {
                 terminal.canvasSize = unzoomedSize
-            } else {
-                // Zoomed IN or at 1x: clear canvasSize so bounds = frame.
-                // Ghostty renders at full zoomed pixel count → sharp text.
-                terminal.canvasSize = .zero
             }
         }
     }
@@ -397,46 +392,60 @@ final class CanvasNode: NSView {
 
     // MARK: Mouse passthrough
 
-    /// When the node is not focused, only the title bar should consume clicks.
-    /// Clicks in the content area bubble up to the canvas so the canvas can
-    /// focus the node without swallowing the event inside a web/terminal view.
+    /// When unfocused, the entire node surface returns `self` so that
+    /// mouseDown can focus the node reliably — no gaps, no missed clicks.
+    /// The title bar still gets drag events forwarded after focus.
     override func hitTest(_ point: NSPoint) -> NSView? {
+        guard bounds.contains(point) else { return nil }
+
         // Always let the resize handle receive its own events.
         let handleHit = resizeHandle.hitTest(convert(point, to: resizeHandle))
         if handleHit != nil {
             return resizeHandle
         }
 
-        guard !isFocused else {
+        if isFocused {
             // Focused: normal hit-testing — content views handle their own events.
             return super.hitTest(point)
         }
 
-        // Unfocused: only the title bar absorbs clicks.
-        let titleBarFrame = convert(titleBar.frame, from: titleBar.superview)
-        if titleBarFrame.contains(point) {
-            return titleBar.hitTest(convert(point, to: titleBar))
-        }
-
-        // Return self for content-area clicks so the canvas coordinator gets
-        // the event and can focus the node, but subviews are not activated.
-        if bounds.contains(point) {
-            return self
-        }
-
-        return nil
+        // Unfocused: return self for ANY click within bounds.
+        // mouseDown handles focus + forwarding to title bar for drag.
+        return self
     }
 
-    /// Called when an unfocused node's content area is clicked directly.
-    /// We handle focus here so clicking the browser or any content immediately
-    /// focuses the node without relying solely on the gesture recognizer.
+    /// Called when an unfocused node is clicked anywhere.
     var onFocusRequest: (() -> Void)?
 
+    /// True while we forwarded mouseDown to the title bar (for drag support).
+    private var forwardingToTitleBar = false
+
     override func mouseDown(with event: NSEvent) {
+        forwardingToTitleBar = false
         if !isFocused {
             onFocusRequest?()
+            // Forward to title bar so click-drag on unfocused title bar
+            // still initiates a move after focusing.
+            let localPoint = convert(event.locationInWindow, from: nil)
+            let titleBarFrame = convert(titleBar.frame, from: titleBar.superview)
+            if titleBarFrame.contains(localPoint) {
+                forwardingToTitleBar = true
+                titleBar.mouseDown(with: event)
+            }
         }
-        // Don't call super — let the gesture recognizer chain handle it.
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if forwardingToTitleBar {
+            titleBar.mouseDragged(with: event)
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if forwardingToTitleBar {
+            titleBar.mouseUp(with: event)
+            forwardingToTitleBar = false
+        }
     }
 
     /// When unfocused, forward scroll events to the superview (canvas) so the

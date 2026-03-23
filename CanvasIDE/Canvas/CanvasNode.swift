@@ -334,6 +334,26 @@ final class CanvasNode: NSView {
         resizeHandle.isHidden = !(isHovered || isFocused)
     }
 
+    // MARK: Zoom-based content scaling
+
+    /// Update the content container's bounds to create a natural scale transform.
+    /// Called by CanvasView when the zoom level changes. The content container's
+    /// frame is set by Auto Layout (zoomed size), but its bounds are set to the
+    /// unzoomed canvas-coordinate size. This makes content (terminal text, browser)
+    /// visually scale with zoom without affecting the title bar or border.
+    func updateContentZoom(_ zoomLevel: Double) {
+        guard zoomLevel > 0 else { return }
+        let containerFrame = contentContainer.frame
+        guard containerFrame.width > 0, containerFrame.height > 0 else { return }
+        let unzoomedSize = CGSize(
+            width: containerFrame.width / zoomLevel,
+            height: containerFrame.height / zoomLevel
+        )
+        if contentContainer.bounds.size != unzoomedSize {
+            contentContainer.setBoundsSize(unzoomedSize)
+        }
+    }
+
     // MARK: Content
 
     /// Replaces the content of the node's content area with the provided view.

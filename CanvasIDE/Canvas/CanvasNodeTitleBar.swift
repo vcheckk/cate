@@ -165,6 +165,13 @@ final class CanvasNodeTitleBar: NSView {
     // MARK: Mouse drag handling
 
     override func mouseDown(with event: NSEvent) {
+        // Check if the click is on the close button — if so, let NSButton handle it
+        let localPoint = convert(event.locationInWindow, from: nil)
+        if closeButton.frame.contains(localPoint) {
+            closeButton.mouseDown(with: event)
+            return
+        }
+
         mouseDownLocation = event.locationInWindow
         onMouseDown?()
 

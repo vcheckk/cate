@@ -125,6 +125,10 @@ final class CanvasView: NSView {
         for (nodeId, nodeView) in nodeViews {
             if let frame = canvasState.viewFrame(for: nodeId) {
                 nodeView.frame = frame
+                // Scale terminal/browser content with zoom
+                if let canvasNode = nodeView as? CanvasNode {
+                    canvasNode.updateContentZoom(canvasState.zoomLevel)
+                }
             }
         }
     }

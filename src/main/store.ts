@@ -13,7 +13,10 @@ import {
   SETTINGS_RESET,
   SESSION_SAVE,
   SESSION_LOAD,
+  SESSION_CLEAR,
   APP_GET_PATH,
+  RECENT_PROJECTS_GET,
+  RECENT_PROJECTS_ADD,
 } from '../shared/ipc-channels'
 import { DEFAULT_SETTINGS } from '../shared/types'
 import type { AppSettings, SessionSnapshot } from '../shared/types'
@@ -69,6 +72,15 @@ export function registerHandlers(): void {
     await fs.writeFile(sessionPath, JSON.stringify(snapshot, null, 2), 'utf-8')
   })
 
+  ipcMain.handle(SESSION_CLEAR, async () => {
+    const sessionPath = getSessionPath()
+    try {
+      await fs.unlink(sessionPath)
+    } catch {
+      // file may not exist
+    }
+  })
+
   ipcMain.handle(SESSION_LOAD, async (): Promise<SessionSnapshot | null> => {
     const sessionPath = getSessionPath()
     try {
@@ -82,5 +94,19 @@ export function registerHandlers(): void {
   // App paths
   ipcMain.handle(APP_GET_PATH, async (_event, name: string) => {
     return app.getPath(name as Parameters<typeof app.getPath>[0])
+  })
+
+  // Recent Projects
+  ipcMain.handle(RECENT_PROJECTS_GET, async () => {
+    const store = await getStore()
+    return store.get('recentProjects', []) as string[]
+  })
+
+  ipcMain.handle(RECENT_PROJECTS_ADD, async (_event, projectPath: string) => {
+    const store = await getStore()
+    const existing: string[] = store.get('recentProjects', []) as string[]
+    const filtered = existing.filter((p) => p !== projectPath)
+    const updated = [projectPath, ...filtered].slice(0, 10)
+    store.set('recentProjects', updated)
   })
 }

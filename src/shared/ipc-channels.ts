@@ -44,10 +44,18 @@ export const SETTINGS_RESET = 'settings:reset'
 // Session
 export const SESSION_SAVE = 'session:save'
 export const SESSION_LOAD = 'session:load'
+export const SESSION_CLEAR = 'session:clear'
 
 // App
 export const APP_PLAY_SOUND = 'app:playSound'
 export const APP_GET_PATH = 'app:getPath'
 
+// Menu actions (main -> renderer)
+export const MENU_OPEN_SETTINGS = 'menu:openSettings'
+
 // Dialog
 export const DIALOG_OPEN_FOLDER = 'dialog:openFolder'
+
+// Recent Projects
+export const RECENT_PROJECTS_GET = 'recent-projects:get'
+export const RECENT_PROJECTS_ADD = 'recent-projects:add'

@@ -164,6 +164,22 @@ export interface ElectronAPI {
   recentProjectsAdd(projectPath: string): Promise<void>
 
   // ---------------------------------------------------------------------------
+  // Layouts
+  // ---------------------------------------------------------------------------
+
+  /** Save a named layout snapshot. */
+  layoutSave(name: string, layout: unknown): Promise<void>
+
+  /** List names of all saved layouts. */
+  layoutList(): Promise<string[]>
+
+  /** Load a named layout snapshot. Returns null if not found. */
+  layoutLoad(name: string): Promise<unknown>
+
+  /** Delete a named layout. */
+  layoutDelete(name: string): Promise<void>
+
+  // ---------------------------------------------------------------------------
   // Menu actions (main -> renderer)
   // ---------------------------------------------------------------------------
 

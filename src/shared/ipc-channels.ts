@@ -60,3 +60,9 @@ export const DIALOG_OPEN_FOLDER = 'dialog:openFolder'
 // Recent Projects
 export const RECENT_PROJECTS_GET = 'recent-projects:get'
 export const RECENT_PROJECTS_ADD = 'recent-projects:add'
+
+// Layouts
+export const LAYOUT_SAVE = 'layout:save'
+export const LAYOUT_LIST = 'layout:list'
+export const LAYOUT_LOAD = 'layout:load'
+export const LAYOUT_DELETE = 'layout:delete'

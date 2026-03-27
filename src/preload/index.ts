@@ -38,6 +38,10 @@ import {
   DIALOG_OPEN_FOLDER,
   RECENT_PROJECTS_GET,
   RECENT_PROJECTS_ADD,
+  LAYOUT_SAVE,
+  LAYOUT_LIST,
+  LAYOUT_LOAD,
+  LAYOUT_DELETE,
 } from '../shared/ipc-channels'
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -305,6 +309,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   recentProjectsAdd(projectPath: string): Promise<void> {
     return ipcRenderer.invoke(RECENT_PROJECTS_ADD, projectPath)
+  },
+
+  // ---------------------------------------------------------------------------
+  // Layouts
+  // ---------------------------------------------------------------------------
+
+  layoutSave(name: string, layout: unknown): Promise<void> {
+    return ipcRenderer.invoke(LAYOUT_SAVE, name, layout)
+  },
+
+  layoutList(): Promise<string[]> {
+    return ipcRenderer.invoke(LAYOUT_LIST)
+  },
+
+  layoutLoad(name: string): Promise<unknown> {
+    return ipcRenderer.invoke(LAYOUT_LOAD, name)
+  },
+
+  layoutDelete(name: string): Promise<void> {
+    return ipcRenderer.invoke(LAYOUT_DELETE, name)
   },
 
   // ---------------------------------------------------------------------------

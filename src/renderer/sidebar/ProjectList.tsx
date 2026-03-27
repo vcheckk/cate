@@ -1,5 +1,5 @@
-import React from 'react'
-import { PanelLeft, Bell, Plus } from 'lucide-react'
+import React, { useState } from 'react'
+import { PanelLeft, Bell, Plus, FolderOpen } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 import { useStatusStore } from '../stores/statusStore'
 import { useUIStore } from '../stores/uiStore'
@@ -13,6 +13,9 @@ export const ProjectList: React.FC = () => {
   const removeWorkspace = useAppStore((s) => s.removeWorkspace)
 
   const toggleSidebar = useUIStore((s) => s.toggleSidebar)
+  const toggleFileExplorer = useUIStore((s) => s.toggleFileExplorer)
+
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
 
   const needsInputCount = useStatusStore((s) => {
     let count = 0
@@ -32,6 +35,14 @@ export const ProjectList: React.FC = () => {
           title="Toggle Sidebar"
         >
           <PanelLeft size={16} />
+        </button>
+
+        <button
+          className="text-white/40 hover:text-white/70 transition-colors p-1"
+          onClick={toggleFileExplorer}
+          title="Toggle File Explorer"
+        >
+          <FolderOpen size={16} />
         </button>
 
         <button
@@ -58,14 +69,40 @@ export const ProjectList: React.FC = () => {
       {/* Scrollable workspace list */}
       <div className="flex-1 overflow-y-auto px-2 py-1">
         <div className="flex flex-col gap-1.5">
-          {workspaces.map((ws) => (
-            <WorkspaceTab
+          {workspaces.map((ws, index) => (
+            <div
               key={ws.id}
-              workspace={ws}
-              isSelected={ws.id === selectedWorkspaceId}
-              onClick={() => selectWorkspace(ws.id)}
-              onClose={() => removeWorkspace(ws.id)}
-            />
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData('text/plain', String(index))
+                e.dataTransfer.effectAllowed = 'move'
+              }}
+              onDragOver={(e) => {
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'move'
+                setDragOverIndex(index)
+              }}
+              onDragLeave={() => setDragOverIndex(null)}
+              onDrop={(e) => {
+                e.preventDefault()
+                const fromIndex = parseInt(e.dataTransfer.getData('text/plain'), 10)
+                if (!isNaN(fromIndex) && fromIndex !== index) {
+                  useAppStore.getState().reorderWorkspaces(fromIndex, index)
+                }
+                setDragOverIndex(null)
+              }}
+              style={{
+                borderTop: dragOverIndex === index ? '2px solid rgba(74, 158, 255, 0.6)' : '2px solid transparent',
+                transition: 'border-color 0.15s',
+              }}
+            >
+              <WorkspaceTab
+                workspace={ws}
+                isSelected={ws.id === selectedWorkspaceId}
+                onClick={() => selectWorkspace(ws.id)}
+                onClose={() => removeWorkspace(ws.id)}
+              />
+            </div>
           ))}
         </div>
       </div>

@@ -335,6 +335,24 @@ export interface MultiWorkspaceSession {
 }
 
 // -----------------------------------------------------------------------------
+// Layout snapshot (saved canvas arrangements)
+// -----------------------------------------------------------------------------
+
+export interface LayoutSnapshot {
+  nodes: Array<{
+    panelType: PanelType
+    origin: Point
+    size: Size
+  }>
+  regions: Array<{
+    origin: Point
+    size: Size
+    label: string
+    color: string
+  }>
+}
+
+// -----------------------------------------------------------------------------
 // App settings — mirrors AppSettings.swift with all defaults
 // -----------------------------------------------------------------------------
 

@@ -108,6 +108,26 @@ function RectangleIcon() {
   )
 }
 
+function SaveIcon() {
+  return (
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </svg>
+  )
+}
+
+function DownloadIcon() {
+  return (
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  )
+}
+
 // -----------------------------------------------------------------------------
 // Component
 // -----------------------------------------------------------------------------
@@ -219,6 +239,56 @@ export const CommandPalette: React.FC = () => {
         shortcutText: '',
         icon: <RectangleIcon />,
         action: () => useCanvasStore.getState().addRegion('Region', { x: 200, y: 200 }, { width: 400, height: 300 }),
+      },
+      {
+        id: 'saveLayout',
+        title: 'Save Layout As...',
+        shortcutText: '',
+        icon: <SaveIcon />,
+        action: async () => {
+          const name = window.prompt('Layout name:')
+          if (!name?.trim()) return
+          const state = useCanvasStore.getState()
+          const appState = useAppStore.getState()
+          const workspace = appState.workspaces.find((w) => w.id === appState.selectedWorkspaceId)
+          const snapshot = {
+            nodes: Object.values(state.nodes).map((n) => {
+              const panel = workspace?.panels[n.panelId]
+              return { panelType: panel?.type ?? 'terminal', origin: n.origin, size: n.size }
+            }),
+            regions: Object.values(state.regions).map((r) => ({
+              origin: r.origin, size: r.size, label: r.label, color: r.color,
+            })),
+          }
+          await window.electronAPI.layoutSave(name.trim(), snapshot)
+        },
+      },
+      {
+        id: 'loadLayout',
+        title: 'Load Layout...',
+        shortcutText: '',
+        icon: <DownloadIcon />,
+        action: async () => {
+          const names = await window.electronAPI.layoutList()
+          if (names.length === 0) { alert('No saved layouts'); return }
+          const name = window.prompt('Available layouts:\n' + names.join('\n') + '\n\nEnter name:')
+          if (!name?.trim()) return
+          const snapshot = await window.electronAPI.layoutLoad(name.trim()) as any
+          if (!snapshot) { alert('Layout not found'); return }
+          const wsId = useAppStore.getState().selectedWorkspaceId
+          useAppStore.getState().closeAllPanels(wsId)
+          for (const node of snapshot.nodes || []) {
+            switch (node.panelType) {
+              case 'terminal': useAppStore.getState().createTerminal(wsId, undefined, node.origin); break
+              case 'editor': useAppStore.getState().createEditor(wsId, undefined, node.origin); break
+              case 'browser': useAppStore.getState().createBrowser(wsId, undefined, node.origin); break
+            }
+          }
+          for (const region of snapshot.regions || []) {
+            useCanvasStore.getState().addRegion(region.label, region.origin, region.size, region.color)
+          }
+          useCanvasStore.getState().zoomToFit()
+        },
       },
     ],
     [

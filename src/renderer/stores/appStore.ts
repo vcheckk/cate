@@ -95,6 +95,7 @@ interface AppStoreActions {
   renameWorkspace: (wsId: string, name: string) => void
   duplicateWorkspace: (wsId: string) => string
   closeAllPanels: (wsId: string) => void
+  reorderWorkspaces: (fromIndex: number, toIndex: number) => void
 }
 
 export type AppStore = AppStoreState & AppStoreActions
@@ -402,6 +403,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
     set((state) => ({ workspaces: [...state.workspaces, copy] }))
     return copy.id
+  },
+
+  reorderWorkspaces(fromIndex, toIndex) {
+    set((state) => {
+      const workspaces = [...state.workspaces]
+      const [moved] = workspaces.splice(fromIndex, 1)
+      workspaces.splice(toIndex, 0, moved)
+      return { workspaces }
+    })
   },
 
   closeAllPanels(wsId) {

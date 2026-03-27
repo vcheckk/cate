@@ -17,6 +17,10 @@ import {
   APP_GET_PATH,
   RECENT_PROJECTS_GET,
   RECENT_PROJECTS_ADD,
+  LAYOUT_SAVE,
+  LAYOUT_LIST,
+  LAYOUT_LOAD,
+  LAYOUT_DELETE,
 } from '../shared/ipc-channels'
 import { DEFAULT_SETTINGS } from '../shared/types'
 import type { AppSettings, SessionSnapshot } from '../shared/types'
@@ -108,5 +112,32 @@ export function registerHandlers(): void {
     const filtered = existing.filter((p) => p !== projectPath)
     const updated = [projectPath, ...filtered].slice(0, 10)
     store.set('recentProjects', updated)
+  })
+
+  // Layouts
+  ipcMain.handle(LAYOUT_SAVE, async (_event, name: string, layout: unknown) => {
+    const store = await getStore()
+    const layouts = (store.get('layouts') as Record<string, unknown>) || {}
+    layouts[name] = layout
+    store.set('layouts', layouts)
+  })
+
+  ipcMain.handle(LAYOUT_LIST, async () => {
+    const store = await getStore()
+    const layouts = (store.get('layouts') as Record<string, unknown>) || {}
+    return Object.keys(layouts)
+  })
+
+  ipcMain.handle(LAYOUT_LOAD, async (_event, name: string) => {
+    const store = await getStore()
+    const layouts = (store.get('layouts') as Record<string, unknown>) || {}
+    return layouts[name] || null
+  })
+
+  ipcMain.handle(LAYOUT_DELETE, async (_event, name: string) => {
+    const store = await getStore()
+    const layouts = (store.get('layouts') as Record<string, unknown>) || {}
+    delete layouts[name]
+    store.set('layouts', layouts)
   })
 }

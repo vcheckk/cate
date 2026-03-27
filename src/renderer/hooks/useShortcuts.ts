@@ -91,8 +91,13 @@ export function useShortcuts(): void {
           break
 
         case 'panelSwitcher': {
-          const ui = useUIStore.getState()
-          ui.setShowPanelSwitcher(!ui.showPanelSwitcher)
+          const uiState = useUIStore.getState()
+          if (uiState.showPanelSwitcher) {
+            // Already open — advance selection via custom event
+            window.dispatchEvent(new CustomEvent('panel-switcher-next'))
+          } else {
+            uiState.setShowPanelSwitcher(true)
+          }
           break
         }
 

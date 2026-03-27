@@ -12,6 +12,7 @@ interface UIStoreState {
   showNodeSwitcher: boolean
   showCommandPalette: boolean
   showPanelSwitcher: boolean
+  showGlobalSearch: boolean
   sidebarVisible: boolean
   fileExplorerVisible: boolean
 }
@@ -20,6 +21,7 @@ interface UIStoreActions {
   setShowNodeSwitcher: (show: boolean) => void
   setShowCommandPalette: (show: boolean) => void
   setShowPanelSwitcher: (show: boolean) => void
+  setShowGlobalSearch: (show: boolean) => void
   toggleSidebar: () => void
   toggleFileExplorer: () => void
   setSidebarVisible: (visible: boolean) => void
@@ -37,6 +39,7 @@ export const useUIStore = create<UIStore>((set) => ({
   showNodeSwitcher: false,
   showCommandPalette: false,
   showPanelSwitcher: false,
+  showGlobalSearch: false,
   sidebarVisible: true,
   fileExplorerVisible: false,
 
@@ -52,6 +55,10 @@ export const useUIStore = create<UIStore>((set) => ({
 
   setShowPanelSwitcher(show) {
     set({ showPanelSwitcher: show })
+  },
+
+  setShowGlobalSearch(show) {
+    set({ showGlobalSearch: show })
   },
 
   toggleSidebar() {

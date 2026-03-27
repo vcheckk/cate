@@ -23,6 +23,7 @@ const BrowserPanel = React.lazy(() => import('./panels/BrowserPanel'))
 import { NodeSwitcher } from './ui/NodeSwitcher'
 import { PanelSwitcher } from './ui/PanelSwitcher'
 import { CommandPalette } from './ui/CommandPalette'
+import { GlobalSearch } from './ui/GlobalSearch'
 import { ShortcutHintOverlay } from './ui/ShortcutHintOverlay'
 import { SettingsWindow } from './settings/SettingsWindow'
 import WelcomePage from './ui/WelcomePage'
@@ -47,6 +48,7 @@ export default function App() {
   const showNodeSwitcher = useUIStore((s) => s.showNodeSwitcher)
   const showCommandPalette = useUIStore((s) => s.showCommandPalette)
   const showPanelSwitcher = useUIStore((s) => s.showPanelSwitcher)
+  const showGlobalSearch = useUIStore((s) => s.showGlobalSearch)
   const showMinimap = useSettingsStore((s) => s.showMinimap)
 
   // Current workspace
@@ -298,6 +300,7 @@ export default function App() {
       {showNodeSwitcher && <NodeSwitcher />}
       {showPanelSwitcher && <PanelSwitcher />}
       {showCommandPalette && <CommandPalette />}
+      {showGlobalSearch && <GlobalSearch />}
       {showSettings && (
         <SettingsWindow isOpen={showSettings} onClose={() => setShowSettings(false)} />
       )}

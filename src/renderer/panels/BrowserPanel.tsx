@@ -74,6 +74,7 @@ export default function BrowserPanel({
 
   const webviewRef = useRef<WebviewElement | null>(null)
   const [currentUrl, setCurrentUrl] = useState(initialUrl)
+  const [inputUrl, setInputUrl] = useState(initialUrl)
   const [canGoBack, setCanGoBack] = useState(false)
   const [canGoForward, setCanGoForward] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -98,6 +99,8 @@ export default function BrowserPanel({
 
     setLoadError(null)
     setIsLoading(true)
+    setCurrentUrl(targetUrl)
+    setInputUrl(targetUrl)
     webview.loadURL(targetUrl)
   }, [browserSearchEngine])
 
@@ -116,9 +119,9 @@ export default function BrowserPanel({
   const handleUrlBarKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
-      navigateTo(currentUrl)
+      navigateTo(inputUrl)
     }
-  }, [currentUrl, navigateTo])
+  }, [inputUrl, navigateTo])
 
   // -------------------------------------------------------------------------
   // Webview event listeners
@@ -131,6 +134,7 @@ export default function BrowserPanel({
     const onDidNavigate = (event: any) => {
       const url = event.url ?? webview.getURL()
       setCurrentUrl(url)
+      setInputUrl(url)
       setCanGoBack(webview.canGoBack())
       setCanGoForward(webview.canGoForward())
       setIsLoading(false)
@@ -140,6 +144,7 @@ export default function BrowserPanel({
     const onDidNavigateInPage = (event: any) => {
       const url = event.url ?? webview.getURL()
       setCurrentUrl(url)
+      setInputUrl(url)
       setCanGoBack(webview.canGoBack())
       setCanGoForward(webview.canGoForward())
     }
@@ -218,8 +223,8 @@ export default function BrowserPanel({
         </button>
         <input
           type="text"
-          value={currentUrl}
-          onChange={(e) => setCurrentUrl(e.target.value)}
+          value={inputUrl}
+          onChange={(e) => setInputUrl(e.target.value)}
           onKeyDown={handleUrlBarKeyDown}
           className="flex-1 h-6 bg-white/5 border border-white/10 rounded-md px-2 text-sm text-white/80 outline-none focus:border-white/25"
           placeholder="Enter URL or search..."

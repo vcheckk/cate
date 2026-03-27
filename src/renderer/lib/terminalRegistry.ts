@@ -9,6 +9,7 @@
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
+import { SearchAddon } from '@xterm/addon-search'
 import { useStatusStore } from '../stores/statusStore'
 import { terminalRestoreData, replayTerminalLog } from './session'
 
@@ -48,6 +49,7 @@ export interface RegistryEntry {
   terminal: Terminal
   fitAddon: FitAddon
   webglAddon: WebglAddon | null
+  searchAddon: SearchAddon
   ptyId: string
   /** Cleanup functions for IPC listeners and xterm disposables. */
   cleanupListeners: Array<() => void>
@@ -96,6 +98,10 @@ async function getOrCreate(panelId: string, opts: CreateOpts): Promise<RegistryE
   const fitAddon = new FitAddon()
   terminal.loadAddon(fitAddon)
 
+  // 2b. SearchAddon — enables find-in-terminal-scrollback
+  const searchAddon = new SearchAddon()
+  terminal.loadAddon(searchAddon)
+
   // 3. Open into a temporary off-screen div so xterm creates its DOM element.
   //    attach() will move that element into the real container later.
   const tempDiv = document.createElement('div')
@@ -128,6 +134,7 @@ async function getOrCreate(panelId: string, opts: CreateOpts): Promise<RegistryE
     terminal,
     fitAddon,
     webglAddon,
+    searchAddon,
     ptyId: '', // filled below
     cleanupListeners,
   }
@@ -323,6 +330,30 @@ function has(panelId: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Search API
+// ---------------------------------------------------------------------------
+
+/** Finds the next match for query in the terminal scrollback. Returns true if a match was found. */
+function findNext(panelId: string, query: string): boolean {
+  const entry = registry.get(panelId)
+  if (!entry?.searchAddon) return false
+  return entry.searchAddon.findNext(query)
+}
+
+/** Finds the previous match for query in the terminal scrollback. Returns true if a match was found. */
+function findPrevious(panelId: string, query: string): boolean {
+  const entry = registry.get(panelId)
+  if (!entry?.searchAddon) return false
+  return entry.searchAddon.findPrevious(query)
+}
+
+/** Clears all search highlight decorations from the terminal. */
+function clearSearch(panelId: string): void {
+  const entry = registry.get(panelId)
+  entry?.searchAddon?.clearDecorations()
+}
+
+// ---------------------------------------------------------------------------
 // Exported singleton
 // ---------------------------------------------------------------------------
 
@@ -333,4 +364,7 @@ export const terminalRegistry = {
   dispose,
   getEntry,
   has,
+  findNext,
+  findPrevious,
+  clearSearch,
 } as const

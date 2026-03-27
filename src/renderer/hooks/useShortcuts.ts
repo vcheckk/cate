@@ -125,6 +125,10 @@ export function useShortcuts(): void {
         case 'zoomToFit':
           canvasStore().zoomToFit()
           break
+
+        case 'globalSearch':
+          useUIStore.getState().setShowGlobalSearch(true)
+          break
       }
     }
 

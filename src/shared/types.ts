@@ -186,7 +186,7 @@ export function displayString(s: StoredShortcut): string {
   return parts.join('')
 }
 
-// All 16 shortcut actions — matches Swift ShortcutAction enum exactly.
+// All 17 shortcut actions — matches Swift ShortcutAction enum exactly.
 export type ShortcutAction =
   | 'newTerminal'
   | 'newBrowser'
@@ -205,6 +205,7 @@ export type ShortcutAction =
   | 'focusPrevious'
   | 'saveFile'
   | 'zoomToFit'
+  | 'globalSearch'
 
 export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   'newTerminal',
@@ -224,6 +225,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   'focusPrevious',
   'saveFile',
   'zoomToFit',
+  'globalSearch',
 ]
 
 export const SHORTCUT_DISPLAY_NAMES: Record<ShortcutAction, string> = {
@@ -244,6 +246,7 @@ export const SHORTCUT_DISPLAY_NAMES: Record<ShortcutAction, string> = {
   focusPrevious: 'Focus Previous Panel',
   saveFile: 'Save File',
   zoomToFit: 'Zoom to Fit',
+  globalSearch: 'Global Search',
 }
 
 export const DEFAULT_SHORTCUTS: Record<ShortcutAction, StoredShortcut> = {
@@ -264,6 +267,7 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutAction, StoredShortcut> = {
   focusPrevious: storedShortcut('\t', { shift: true, control: true }),
   saveFile: storedShortcut('s', { command: true }),
   zoomToFit: storedShortcut('1', { command: true }),
+  globalSearch: storedShortcut('h', { command: true, shift: true }),
 }
 
 // -----------------------------------------------------------------------------

@@ -1,7 +1,7 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import { Bell, X } from 'lucide-react'
 import type { WorkspaceState } from '../../shared/types'
-import { useStatusStore, selectAllPorts, selectPrimaryCwd, selectGitInfo } from '../stores/statusStore'
+import { useStatusStore } from '../stores/statusStore'
 
 const PULSE_KEYFRAMES = `
 @keyframes sidebar-pulse-ring {
@@ -42,20 +42,45 @@ export const WorkspaceTab: React.FC<WorkspaceTabProps> = ({
 
   const isAnimating = useStatusStore((s) => s.isAnimating(workspace.id))
 
-  const ports = useStatusStore(() => selectAllPorts(workspace.id))
-  const cwd = useStatusStore(() => selectPrimaryCwd(workspace.id))
-  const gitInfo = useStatusStore(() => selectGitInfo(workspace.id))
-
-  const panelCount = Object.keys(workspace.panels).length
-  const claudeState = useStatusStore((s) => {
+  // Single store read for all workspace status data (avoids multiple O(n) loops)
+  const wsStatus = useStatusStore((s) => {
     const ws = s.workspaces[workspace.id]
-    if (!ws) return 'notRunning'
-    const vals = Object.values(ws.claudeCodeState)
+    if (!ws) return null
+    return {
+      listeningPorts: ws.listeningPorts,
+      terminalCwd: ws.terminalCwd,
+      claudeCodeState: ws.claudeCodeState,
+    }
+  })
+
+  const gitInfo = useStatusStore((s) => s.gitInfo[workspace.id] ?? null)
+
+  // Derive ports, cwd, claudeState from the single store snapshot
+  const ports = useMemo(() => {
+    if (!wsStatus) return []
+    const allPorts = new Set<number>()
+    for (const terminalPorts of Object.values(wsStatus.listeningPorts)) {
+      for (const port of terminalPorts) allPorts.add(port)
+    }
+    return Array.from(allPorts).sort((a, b) => a - b)
+  }, [wsStatus?.listeningPorts])
+
+  const cwd = useMemo(() => {
+    if (!wsStatus) return null
+    const cwds = Object.values(wsStatus.terminalCwd)
+    return cwds.length > 0 ? cwds[0] : null
+  }, [wsStatus?.terminalCwd])
+
+  const claudeState = useMemo(() => {
+    if (!wsStatus) return 'notRunning'
+    const vals = Object.values(wsStatus.claudeCodeState)
     if (vals.includes('waitingForInput')) return 'waitingForInput'
     if (vals.includes('running')) return 'running'
     if (vals.includes('finished')) return 'finished'
     return 'notRunning'
-  })
+  }, [wsStatus?.claudeCodeState])
+
+  const panelCount = Object.keys(workspace.panels).length
 
   const showClaudeStatus = claudeState === 'running' || claudeState === 'waitingForInput'
   const showNeedsInput = claudeState === 'waitingForInput'

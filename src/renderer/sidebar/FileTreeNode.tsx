@@ -18,40 +18,38 @@ interface IconDef {
 
 function getFileIcon(extension: string, isDirectory: boolean, isExpanded: boolean): IconDef {
   if (isDirectory) {
-    return isExpanded
-      ? { icon: <FolderOpenIcon />, color: '#E2B855' }
-      : { icon: <FolderIcon />, color: '#E2B855' }
+    return isExpanded ? ICON_FOLDER_OPEN : ICON_FOLDER
   }
 
   switch (extension.toLowerCase()) {
     case 'swift':
-      return { icon: <CodeIcon />, color: '#F97316' } // orange
+      return ICON_SWIFT
     case 'js':
     case 'jsx':
     case 'ts':
     case 'tsx':
-      return { icon: <FileCodeIcon />, color: '#EAB308' } // yellow
+      return ICON_JS
     case 'py':
-      return { icon: <FileCodeIcon />, color: '#3B82F6' } // blue
+      return ICON_PY
     case 'json':
-      return { icon: <BracesIcon />, color: '#A78BFA' } // purple-ish
+      return ICON_JSON
     case 'md':
     case 'markdown':
-      return { icon: <FileTextIcon />, color: '#9CA3AF' } // gray
+      return ICON_MD
     case 'html':
     case 'htm':
-      return { icon: <GlobeIcon />, color: '#3B82F6' } // blue
+      return ICON_HTML
     case 'css':
     case 'scss':
-      return { icon: <PaintbrushIcon />, color: '#A855F7' } // purple
+      return ICON_CSS
     case 'png':
     case 'jpg':
     case 'jpeg':
     case 'gif':
     case 'svg':
-      return { icon: <ImageIcon />, color: '#14B8A6' } // teal
+      return ICON_IMAGE
     default:
-      return { icon: <FileIcon />, color: '#9CA3AF' } // gray
+      return ICON_DEFAULT
   }
 }
 
@@ -151,6 +149,19 @@ const ImageIcon: React.FC = () => (
     <polyline points="14 10 10.5 7 4 14" />
   </svg>
 )
+
+// Pre-created icon elements to avoid recreating JSX on every render
+const ICON_FOLDER_OPEN: IconDef = { icon: <FolderOpenIcon />, color: '#E2B855' }
+const ICON_FOLDER: IconDef = { icon: <FolderIcon />, color: '#E2B855' }
+const ICON_SWIFT: IconDef = { icon: <CodeIcon />, color: '#F97316' }
+const ICON_JS: IconDef = { icon: <FileCodeIcon />, color: '#EAB308' }
+const ICON_PY: IconDef = { icon: <FileCodeIcon />, color: '#3B82F6' }
+const ICON_JSON: IconDef = { icon: <BracesIcon />, color: '#A78BFA' }
+const ICON_MD: IconDef = { icon: <FileTextIcon />, color: '#9CA3AF' }
+const ICON_HTML: IconDef = { icon: <GlobeIcon />, color: '#3B82F6' }
+const ICON_CSS: IconDef = { icon: <PaintbrushIcon />, color: '#A855F7' }
+const ICON_IMAGE: IconDef = { icon: <ImageIcon />, color: '#14B8A6' }
+const ICON_DEFAULT: IconDef = { icon: <FileIcon />, color: '#9CA3AF' }
 
 // -----------------------------------------------------------------------------
 // FileTreeNode component

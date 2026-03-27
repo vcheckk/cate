@@ -6,7 +6,7 @@
 import { useCallback, useRef } from 'react'
 import { useCanvasStore } from '../stores/canvasStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { snap } from '../canvas/layoutEngine'
+import { snap, snapToEdges } from '../canvas/layoutEngine'
 import type { Point, Rect } from '../../shared/types'
 
 interface DragState {
@@ -58,6 +58,24 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
         ds.lastClientY = ev.clientY
 
         useCanvasStore.getState().moveNode(nodeId, newOrigin)
+
+        // Show snap guides while dragging
+        const settings = useSettingsStore.getState()
+        if (settings.snapToGridEnabled) {
+          const currentState = useCanvasStore.getState()
+          const currentNode2 = currentState.nodes[nodeId]
+          if (currentNode2) {
+            const neighbors = Object.values(currentState.nodes)
+              .filter((n) => n.id !== nodeId)
+              .map((n) => ({ origin: n.origin, size: n.size }))
+            const edgeResult = snapToEdges(
+              { origin: currentNode2.origin, size: currentNode2.size },
+              neighbors,
+              8,
+            )
+            currentState.setSnapGuides(edgeResult)
+          }
+        }
       }
 
       const handleMouseUp = () => {
@@ -87,6 +105,7 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
           }
         }
 
+        useCanvasStore.getState().clearSnapGuides()
         dragStateRef.current = null
       }
 

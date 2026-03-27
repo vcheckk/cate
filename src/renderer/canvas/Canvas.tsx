@@ -5,8 +5,11 @@
 
 import React, { useRef, useCallback, useEffect, useState } from 'react'
 import { useCanvasStore } from '../stores/canvasStore'
+import { useAppStore } from '../stores/appStore'
 import { useCanvasInteraction } from '../hooks/useCanvasInteraction'
+import { viewToCanvas } from '../lib/coordinates'
 import CanvasGrid from './CanvasGrid'
+import SnapGuides from './SnapGuides'
 import ContextMenu from '../ui/ContextMenu'
 import type { Point, PanelType } from '../../shared/types'
 
@@ -43,8 +46,8 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
       handleWheel(e as unknown as React.WheelEvent<HTMLDivElement>)
     }
 
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
+    el.addEventListener('wheel', onWheel, { capture: true, passive: false })
+    return () => el.removeEventListener('wheel', onWheel, { capture: true })
   }, [handleWheel])
 
   // Track container size for grid visibility calculations
@@ -85,6 +88,26 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
     [],
   )
 
+  const handleFileDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (e.dataTransfer.types.includes('application/canvaside-file')) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'copy'
+    }
+  }, [])
+
+  const handleFileDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    const filePath = e.dataTransfer.getData('application/canvaside-file')
+    if (!filePath) return
+    e.preventDefault()
+    const rect = canvasRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const viewPoint = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+    const { zoomLevel, viewportOffset } = useCanvasStore.getState()
+    const canvasPoint = viewToCanvas(viewPoint, zoomLevel, viewportOffset)
+    const wsId = useAppStore.getState().selectedWorkspaceId
+    useAppStore.getState().createEditor(wsId, filePath, canvasPoint)
+  }, [canvasRef])
+
   // CSS transform: scale first, then translate (divide offset by zoom since
   // the translate happens in the scaled coordinate space)
   const worldTransform = `scale(${zoom}) translate(${offset.x / zoom}px, ${offset.y / zoom}px)`
@@ -121,6 +144,8 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onContextMenu={handleContextMenu}
+      onDragOver={handleFileDragOver}
+      onDrop={handleFileDrop}
     >
       {/* World div: transformed to implement pan/zoom */}
       <div
@@ -139,6 +164,7 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
           containerWidth={containerSize.width}
           containerHeight={containerSize.height}
         />
+        <SnapGuides />
         {children}
       </div>
 

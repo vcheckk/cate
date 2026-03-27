@@ -116,6 +116,19 @@ export const CommandPalette: React.FC = () => {
   const toggleFileExplorer = useUIStore((s) => s.toggleFileExplorer)
   const setZoom = useCanvasStore((s) => s.setZoom)
 
+  const rootPath = useAppStore((s) => {
+    const ws = s.workspaces.find((w) => w.id === s.selectedWorkspaceId)
+    return ws?.rootPath
+  })
+  const [files, setFiles] = useState<string[]>([])
+
+  useEffect(() => {
+    if (!rootPath) { setFiles([]); return }
+    window.electronAPI.gitLsFiles(rootPath)
+      .then((result) => setFiles(result))
+      .catch(() => setFiles([]))
+  }, [rootPath])
+
   const [searchText, setSearchText] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -205,14 +218,26 @@ export const CommandPalette: React.FC = () => {
     return allCommands.filter((cmd) => cmd.title.toLowerCase().includes(lower))
   }, [allCommands, searchText])
 
+  // Matching files from git-tracked list
+  const matchingFiles = useMemo(() => {
+    if (searchText.length <= 1) return []
+    const lower = searchText.toLowerCase()
+    return files
+      .filter((f) => {
+        const name = f.split('/').pop() || f
+        return name.toLowerCase().includes(lower)
+      })
+      .slice(0, 10)
+  }, [files, searchText])
+
+  const totalItems = filteredCommands.length + matchingFiles.length
+
   // Clamp selection when filtered list changes
   useEffect(() => {
     setSelectedIndex((prev) =>
-      prev >= filteredCommands.length
-        ? Math.max(0, filteredCommands.length - 1)
-        : prev,
+      prev >= totalItems ? Math.max(0, totalItems - 1) : prev,
     )
-  }, [filteredCommands.length])
+  }, [totalItems])
 
   // Focus input when shown
   useEffect(() => {
@@ -243,23 +268,30 @@ export const CommandPalette: React.FC = () => {
         case 'ArrowDown':
           e.preventDefault()
           setSelectedIndex((prev) =>
-            filteredCommands.length === 0
-              ? 0
-              : (prev + 1) % filteredCommands.length,
+            totalItems === 0 ? 0 : (prev + 1) % totalItems,
           )
           break
         case 'ArrowUp':
           e.preventDefault()
           setSelectedIndex((prev) =>
-            filteredCommands.length === 0
-              ? 0
-              : (prev - 1 + filteredCommands.length) % filteredCommands.length,
+            totalItems === 0 ? 0 : (prev - 1 + totalItems) % totalItems,
           )
           break
         case 'Enter':
           e.preventDefault()
-          if (filteredCommands[selectedIndex]) {
-            executeCommand(filteredCommands[selectedIndex])
+          if (selectedIndex < filteredCommands.length) {
+            if (filteredCommands[selectedIndex]) {
+              executeCommand(filteredCommands[selectedIndex])
+            }
+          } else {
+            const fileIndex = selectedIndex - filteredCommands.length
+            const file = matchingFiles[fileIndex]
+            if (file) {
+              const wsId = useAppStore.getState().selectedWorkspaceId
+              const fullPath = rootPath ? `${rootPath}/${file}` : file
+              useAppStore.getState().createEditor(wsId, fullPath)
+              close()
+            }
           }
           break
         case 'Escape':
@@ -272,7 +304,7 @@ export const CommandPalette: React.FC = () => {
     document.addEventListener('keydown', handleKey, { capture: true })
     return () =>
       document.removeEventListener('keydown', handleKey, { capture: true })
-  }, [showCommandPalette, filteredCommands, selectedIndex, executeCommand, close])
+  }, [showCommandPalette, filteredCommands, matchingFiles, selectedIndex, totalItems, rootPath, executeCommand, close])
 
   if (!showCommandPalette) return null
 
@@ -305,29 +337,63 @@ export const CommandPalette: React.FC = () => {
 
         {/* Commands list */}
         <div className="max-h-[300px] overflow-y-auto py-1">
-          {filteredCommands.length === 0 ? (
+          {filteredCommands.length === 0 && matchingFiles.length === 0 ? (
             <div className="text-white/40 text-sm text-center py-4">
               No matching commands
             </div>
           ) : (
-            filteredCommands.map((cmd, index) => (
-              <div
-                key={cmd.id}
-                className={`flex items-center px-3 py-2 gap-3 cursor-pointer transition-colors ${
-                  index === selectedIndex
-                    ? 'bg-white/[0.1]'
-                    : 'hover:bg-white/[0.05]'
-                }`}
-                onClick={() => executeCommand(cmd)}
-                onMouseEnter={() => setSelectedIndex(index)}
-              >
-                <span className="text-white/60 flex-shrink-0">{cmd.icon}</span>
-                <span className="text-sm text-white/90 flex-1">{cmd.title}</span>
-                <span className="text-xs text-white/40 flex-shrink-0">
-                  {cmd.shortcutText}
-                </span>
-              </div>
-            ))
+            <>
+              {filteredCommands.map((cmd, index) => (
+                <div
+                  key={cmd.id}
+                  className={`flex items-center px-3 py-2 gap-3 cursor-pointer transition-colors ${
+                    index === selectedIndex
+                      ? 'bg-white/[0.1]'
+                      : 'hover:bg-white/[0.05]'
+                  }`}
+                  onClick={() => executeCommand(cmd)}
+                  onMouseEnter={() => setSelectedIndex(index)}
+                >
+                  <span className="text-white/60 flex-shrink-0">{cmd.icon}</span>
+                  <span className="text-sm text-white/90 flex-1">{cmd.title}</span>
+                  <span className="text-xs text-white/40 flex-shrink-0">
+                    {cmd.shortcutText}
+                  </span>
+                </div>
+              ))}
+              {matchingFiles.length > 0 && (
+                <>
+                  <div className="px-3 py-1 text-xs text-zinc-500 uppercase tracking-wider">
+                    Files
+                  </div>
+                  {matchingFiles.map((file, i) => {
+                    const fileIndex = filteredCommands.length + i
+                    return (
+                      <div
+                        key={file}
+                        className={`flex items-center px-3 py-2 gap-3 cursor-pointer transition-colors ${
+                          fileIndex === selectedIndex
+                            ? 'bg-white/[0.1]'
+                            : 'hover:bg-white/[0.05]'
+                        }`}
+                        onClick={() => {
+                          const wsId = useAppStore.getState().selectedWorkspaceId
+                          const fullPath = rootPath ? `${rootPath}/${file}` : file
+                          useAppStore.getState().createEditor(wsId, fullPath)
+                          close()
+                        }}
+                        onMouseEnter={() => setSelectedIndex(fileIndex)}
+                      >
+                        <span className="text-white/60 flex-shrink-0">
+                          <FileTextIcon />
+                        </span>
+                        <span className="text-sm text-white/90 flex-1 truncate">{file}</span>
+                      </div>
+                    )
+                  })}
+                </>
+              )}
+            </>
           )}
         </div>
       </div>

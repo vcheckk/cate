@@ -31,6 +31,7 @@ interface CanvasStoreState {
   nextZOrder: number
   nextCreationIndex: number
   containerSize: Size
+  snapGuides: { x: number | null; y: number | null }
 }
 
 interface CanvasStoreActions {
@@ -71,6 +72,9 @@ interface CanvasStoreActions {
   moveToBack: (nodeId: CanvasNodeId) => void
 
   togglePin: (id: CanvasNodeId) => void
+
+  setSnapGuides: (guides: { x: number | null; y: number | null }) => void
+  clearSnapGuides: () => void
 
   // Bulk reset (used when switching workspaces)
   loadWorkspaceCanvas: (
@@ -163,6 +167,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   nextZOrder: 0,
   nextCreationIndex: 0,
   containerSize: { width: 0, height: 0 },
+  snapGuides: { x: null, y: null },
 
   // --- Actions ---
 
@@ -478,6 +483,14 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         nodes: { ...state.nodes, [id]: { ...node, isPinned: !node.isPinned } },
       }
     })
+  },
+
+  setSnapGuides(guides) {
+    set({ snapGuides: guides })
+  },
+
+  clearSnapGuides() {
+    set({ snapGuides: { x: null, y: null } })
   },
 
   loadWorkspaceCanvas(nodes, viewportOffset, zoomLevel, focusedNodeId) {

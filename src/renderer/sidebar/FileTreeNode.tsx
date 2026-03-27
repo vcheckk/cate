@@ -227,6 +227,12 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
         }`}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         onClick={handleClick}
+        draggable={!node.isDirectory}
+        onDragStart={(e: React.DragEvent) => {
+          if (node.isDirectory) return
+          e.dataTransfer.setData('application/canvaside-file', node.path)
+          e.dataTransfer.effectAllowed = 'copy'
+        }}
       >
         {/* Chevron for directories */}
         {node.isDirectory ? (

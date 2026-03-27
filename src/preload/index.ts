@@ -26,6 +26,7 @@ import {
   GIT_STAGE,
   GIT_UNSTAGE,
   GIT_COMMIT,
+  GIT_WORKTREE_LIST,
   SHELL_REGISTER_TERMINAL,
   SHELL_UNREGISTER_TERMINAL,
   SHELL_ACTIVITY_UPDATE,
@@ -191,6 +192,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   gitCommit(cwd: string, message: string): Promise<void> {
     return ipcRenderer.invoke(GIT_COMMIT, cwd, message)
+  },
+
+  gitWorktreeList(cwd: string): Promise<Array<{ path: string; branch: string; isBare: boolean; isCurrent: boolean }>> {
+    return ipcRenderer.invoke(GIT_WORKTREE_LIST, cwd)
   },
 
   // ---------------------------------------------------------------------------

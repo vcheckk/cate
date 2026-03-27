@@ -99,6 +99,14 @@ export interface ElectronAPI {
   /** Commit staged changes with a message. */
   gitCommit(cwd: string, message: string): Promise<void>
 
+  /** List git worktrees for a repository. */
+  gitWorktreeList(cwd: string): Promise<Array<{
+    path: string
+    branch: string
+    isBare: boolean
+    isCurrent: boolean
+  }>>
+
   // ---------------------------------------------------------------------------
   // Shell / Process Monitor
   // ---------------------------------------------------------------------------

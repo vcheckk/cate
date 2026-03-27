@@ -14,6 +14,7 @@ import {
   GIT_STAGE,
   GIT_UNSTAGE,
   GIT_COMMIT,
+  GIT_WORKTREE_LIST,
 } from '../../shared/ipc-channels'
 
 /**
@@ -96,5 +97,51 @@ export function registerHandlers(): void {
   ipcMain.handle(GIT_COMMIT, async (_event, cwd: string, message: string) => {
     const git = simpleGit(cwd)
     await git.commit(message)
+  })
+
+  ipcMain.handle(GIT_WORKTREE_LIST, async (_event, cwd: string) => {
+    try {
+      const git = simpleGit(cwd)
+      const raw = await git.raw(['worktree', 'list', '--porcelain'])
+      const worktrees: Array<{
+        path: string
+        branch: string
+        isBare: boolean
+        isCurrent: boolean
+      }> = []
+
+      // Parse porcelain output — blocks separated by blank lines
+      const blocks = raw.trim().split('\n\n')
+      for (const block of blocks) {
+        const lines = block.split('\n')
+        let wtPath = ''
+        let branch = ''
+        let isBare = false
+        for (const line of lines) {
+          if (line.startsWith('worktree ')) {
+            wtPath = line.slice('worktree '.length)
+          } else if (line.startsWith('branch ')) {
+            // branch refs/heads/main -> main
+            branch = line.slice('branch '.length).replace('refs/heads/', '')
+          } else if (line === 'bare') {
+            isBare = true
+          } else if (line.startsWith('HEAD ') && !branch) {
+            // detached HEAD — show abbreviated SHA
+            branch = line.slice('HEAD '.length).substring(0, 8)
+          }
+        }
+        if (wtPath) {
+          worktrees.push({
+            path: wtPath,
+            branch: branch || '(unknown)',
+            isBare,
+            isCurrent: path.resolve(wtPath) === path.resolve(cwd),
+          })
+        }
+      }
+      return worktrees
+    } catch {
+      return []
+    }
   })
 }

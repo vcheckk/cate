@@ -33,6 +33,7 @@ export const GIT_DIFF = 'git:diff'
 export const GIT_STAGE = 'git:stage'
 export const GIT_UNSTAGE = 'git:unstage'
 export const GIT_COMMIT = 'git:commit'
+export const GIT_WORKTREE_LIST = 'git:worktreeList'
 
 // Shell / Process Monitor
 export const SHELL_REGISTER_TERMINAL = 'shell:registerTerminal'

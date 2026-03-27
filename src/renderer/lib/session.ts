@@ -31,12 +31,20 @@ export async function saveSession(): Promise<void> {
 
   const snapshots: SessionSnapshot[] = []
 
-  // Skip ephemeral workspaces (no panels and no rootPath)
+  // Skip ephemeral workspaces (no panels, no rootPath, and not deferred)
   const persistableWorkspaces = appState.workspaces.filter(
-    (ws) => Object.keys(ws.panels).length > 0 || ws.rootPath,
+    (ws) => Object.keys(ws.panels).length > 0 || ws.rootPath || deferredSnapshots.has(ws.id),
   )
 
   for (const workspace of persistableWorkspaces) {
+    // If this workspace has a deferred snapshot (never switched to), re-use
+    // the original snapshot data instead of serializing the empty store state.
+    const deferred = deferredSnapshots.get(workspace.id)
+    if (deferred) {
+      snapshots.push(deferred)
+      continue
+    }
+
     // For the selected workspace, use canvasStore (most current state)
     // For others, use the workspace's stored canvasNodes
     const isSelected = workspace.id === appState.selectedWorkspaceId

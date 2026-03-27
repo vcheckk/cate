@@ -17,7 +17,7 @@ import {
 import { FileTreeNode, FILE_EXCLUSIONS } from '../../shared/types'
 
 // Active chokidar file watchers keyed by directory path
-const watchers: Map<string, FSWatcher> = new Map()
+const watchers: Map<string, { watcher: FSWatcher; cancelFlush?: () => void }> = new Map()
 
 // Set of exclusion names for fast lookup
 const exclusionSet = new Set(FILE_EXCLUSIONS)
@@ -127,13 +127,23 @@ function watchStart(dirPath: string, mainWindow: BrowserWindow): void {
   watcher.on('change', (filePath: string) => queueEvent('update', filePath))
   watcher.on('unlink', (filePath: string) => queueEvent('delete', filePath))
 
-  watchers.set(dirPath, watcher)
+  watchers.set(dirPath, {
+    watcher,
+    cancelFlush: () => {
+      if (flushTimer) {
+        clearTimeout(flushTimer)
+        flushTimer = null
+      }
+      pendingEvents = new Map()
+    },
+  })
 }
 
 function watchStop(dirPath: string): void {
-  const watcher = watchers.get(dirPath)
-  if (watcher) {
-    watcher.close()
+  const entry = watchers.get(dirPath)
+  if (entry) {
+    entry.cancelFlush?.()
+    entry.watcher.close()
     watchers.delete(dirPath)
   }
 }

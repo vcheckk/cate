@@ -147,6 +147,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   removeWorkspace(id) {
+    // Clean up deferred snapshot if workspace was never switched to
+    deferredSnapshots.delete(id)
     // Dispose terminals before removing workspace state
     get().closeAllPanels(id)
 

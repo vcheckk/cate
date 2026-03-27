@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react'
+import { useShallow } from 'zustand/shallow'
 import { Bell, X } from 'lucide-react'
 import type { WorkspaceState } from '../../shared/types'
 import { useStatusStore } from '../stores/statusStore'
@@ -43,7 +44,7 @@ export const WorkspaceTab: React.FC<WorkspaceTabProps> = ({
   const isAnimating = useStatusStore((s) => s.isAnimating(workspace.id))
 
   // Single store read for all workspace status data (avoids multiple O(n) loops)
-  const wsStatus = useStatusStore((s) => {
+  const wsStatus = useStatusStore(useShallow((s) => {
     const ws = s.workspaces[workspace.id]
     if (!ws) return null
     return {
@@ -51,7 +52,7 @@ export const WorkspaceTab: React.FC<WorkspaceTabProps> = ({
       terminalCwd: ws.terminalCwd,
       claudeCodeState: ws.claudeCodeState,
     }
-  })
+  }))
 
   const gitInfo = useStatusStore((s) => s.gitInfo[workspace.id] ?? null)
 

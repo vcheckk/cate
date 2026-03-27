@@ -5,7 +5,7 @@
 import { IPty, spawn as ptySpawn } from 'node-pty'
 import { ipcMain, BrowserWindow } from 'electron'
 import os from 'os'
-import { execSync } from 'child_process'
+import { execFile } from 'child_process'
 import {
   TERMINAL_CREATE,
   TERMINAL_WRITE,
@@ -137,14 +137,20 @@ export function registerHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(TERMINAL_GET_CWD, async (_event, ptyId: string): Promise<string | null> => {
     const pid = terminalPids.get(ptyId)
     if (!pid) return null
-    try {
-      const output = execSync(`lsof -d cwd -p ${pid} -Fn`, { encoding: 'utf-8', timeout: 2000 })
-      const lines = output.split('\n')
-      const nameLine = lines.find(l => l.startsWith('n'))
-      return nameLine ? nameLine.slice(1) : null
-    } catch {
-      return null
-    }
+    return new Promise((resolve) => {
+      execFile('lsof', ['-d', 'cwd', '-p', `${pid}`, '-Fn'], {
+        encoding: 'utf-8',
+        timeout: 2000,
+      }, (err, stdout) => {
+        if (err || !stdout) {
+          resolve(null)
+          return
+        }
+        const lines = stdout.split('\n')
+        const nameLine = lines.find(l => l.startsWith('n'))
+        resolve(nameLine ? nameLine.slice(1) : null)
+      })
+    })
   })
 
   // Read terminal log for session restore

@@ -3,7 +3,7 @@
 // Ported from ProcessMonitor.swift — walks process tree to detect Claude Code
 // =============================================================================
 
-import { execSync, execFile } from 'child_process'
+import { execFile } from 'child_process'
 import { ipcMain, BrowserWindow } from 'electron'
 import {
   SHELL_REGISTER_TERMINAL,
@@ -41,49 +41,61 @@ const previousStates: Map<string, PreviousState> = new Map()
 // Polling interval handle
 let pollInterval: ReturnType<typeof setInterval> | null = null
 
+// Busy flag to prevent overlapping poll cycles
+let pollBusy = false
+
 /**
  * Get direct child PIDs of a given process.
  * Runs: ps -o pid= -ppid=<pid>
  */
-function getChildPids(pid: number): number[] {
-  if (!pid || pid <= 0) return []
-  try {
-    const output = execSync(`ps -o pid= -ppid=${pid}`, {
+function getChildPids(pid: number): Promise<number[]> {
+  if (!pid || pid <= 0) return Promise.resolve([])
+  return new Promise((resolve) => {
+    execFile('ps', ['-o', 'pid=', `-ppid=${pid}`], {
       encoding: 'utf-8',
       timeout: 2000,
-      stdio: ['pipe', 'pipe', 'ignore'],
+    }, (err, stdout) => {
+      if (err || !stdout) {
+        resolve([])
+        return
+      }
+      resolve(
+        stdout
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+          .map((line) => parseInt(line, 10))
+          .filter((n) => !isNaN(n))
+      )
     })
-    return output
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .map((line) => parseInt(line, 10))
-      .filter((n) => !isNaN(n))
-  } catch {
-    return []
-  }
+  })
 }
 
 /**
  * Get the process name (command basename) for a given PID.
  * Runs: ps -o comm= -p <pid>
  */
-function getProcessName(pid: number): string | null {
-  if (!pid || pid <= 0) return null
-  try {
-    const output = execSync(`ps -o comm= -p ${pid}`, {
+function getProcessName(pid: number): Promise<string | null> {
+  if (!pid || pid <= 0) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    execFile('ps', ['-o', 'comm=', '-p', `${pid}`], {
       encoding: 'utf-8',
       timeout: 2000,
-      stdio: ['pipe', 'pipe', 'ignore'],
+    }, (err, stdout) => {
+      if (err || !stdout) {
+        resolve(null)
+        return
+      }
+      const name = stdout.trim()
+      if (name.length === 0) {
+        resolve(null)
+        return
+      }
+      // ps -o comm= may return full path; extract basename
+      const parts = name.split('/')
+      resolve(parts[parts.length - 1])
     })
-    const name = output.trim()
-    if (name.length === 0) return null
-    // ps -o comm= may return full path; extract basename
-    const parts = name.split('/')
-    return parts[parts.length - 1]
-  } catch {
-    return null
-  }
+  })
 }
 
 /**
@@ -103,30 +115,35 @@ function isShellProcess(name: string): boolean {
   return shells.includes(name.toLowerCase())
 }
 
-function getAllDescendantPids(pid: number): number[] {
-  const children = getChildPids(pid)
+async function getAllDescendantPids(pid: number): Promise<number[]> {
+  const children = await getChildPids(pid)
   const allDescendants = [...children]
   for (const child of children) {
-    allDescendants.push(...getAllDescendantPids(child))
+    allDescendants.push(...(await getAllDescendantPids(child)))
   }
   return allDescendants
 }
 
-function scanListeningPorts(): Promise<Map<string, number[]>> {
+async function scanListeningPorts(): Promise<Map<string, number[]>> {
+  if (registeredTerminals.size === 0) {
+    return new Map()
+  }
+
+  const pidToTerminal = new Map<number, string>()
+  const pidPromises: Promise<void>[] = []
+  for (const [terminalId, info] of registeredTerminals) {
+    pidPromises.push(
+      getAllDescendantPids(info.shellPid).then((descendants) => {
+        const allPids = [info.shellPid, ...descendants]
+        for (const pid of allPids) {
+          pidToTerminal.set(pid, terminalId)
+        }
+      })
+    )
+  }
+  await Promise.all(pidPromises)
+
   return new Promise((resolve) => {
-    if (registeredTerminals.size === 0) {
-      resolve(new Map())
-      return
-    }
-
-    const pidToTerminal = new Map<number, string>()
-    for (const [terminalId, info] of registeredTerminals) {
-      const allPids = [info.shellPid, ...getAllDescendantPids(info.shellPid)]
-      for (const pid of allPids) {
-        pidToTerminal.set(pid, terminalId)
-      }
-    }
-
     execFile('lsof', ['-iTCP', '-sTCP:LISTEN', '-P', '-n', '-F', 'pn'], {
       timeout: 5000,
     }, (err, stdout) => {
@@ -163,51 +180,54 @@ function scanListeningPorts(): Promise<Map<string, number[]>> {
   })
 }
 
-function getProcessCwd(pid: number): string | null {
-  if (!pid || pid <= 0) return null
-  try {
-    const output = execSync(`lsof -p ${pid} -d cwd -Fn 2>/dev/null`, {
+function getProcessCwd(pid: number): Promise<string | null> {
+  if (!pid || pid <= 0) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    execFile('lsof', ['-p', `${pid}`, '-d', 'cwd', '-Fn'], {
       encoding: 'utf-8',
       timeout: 2000,
-      stdio: ['pipe', 'pipe', 'ignore'],
-    })
-    for (const line of output.split('\n')) {
-      if (line.startsWith('n') && line.length > 1) {
-        return line.slice(1)
+    }, (err, stdout) => {
+      if (err || !stdout) {
+        resolve(null)
+        return
       }
-    }
-    return null
-  } catch {
-    return null
-  }
+      for (const line of stdout.split('\n')) {
+        if (line.startsWith('n') && line.length > 1) {
+          resolve(line.slice(1))
+          return
+        }
+      }
+      resolve(null)
+    })
+  })
 }
 
 /**
  * Scan a single terminal's process tree to detect activity and Claude state.
  * Ported from ProcessMonitor.scanProcesses(for:) in Swift.
  */
-function scanTerminal(terminalId: string, info: TerminalRegistration): ScanResult {
+async function scanTerminal(terminalId: string, info: TerminalRegistration): Promise<ScanResult> {
   const prev = previousStates.get(terminalId) || {
     claudeState: 'notRunning' as ClaudeCodeState,
     previouslyHadClaude: false,
   }
 
   // Get children of the shell PID
-  const childrenToScan = getChildPids(info.shellPid)
+  const childrenToScan = await getChildPids(info.shellPid)
 
   let foundClaude = false
   let claudeHasActiveChildren = false
   let firstChildName: string | null = null
 
   for (const childPid of childrenToScan) {
-    const name = getProcessName(childPid)
+    const name = await getProcessName(childPid)
     if (name) {
       if (firstChildName === null && !isShellProcess(name)) {
         firstChildName = name
       }
       if (isClaudeProcess(name)) {
         foundClaude = true
-        const claudeChildren = getChildPids(childPid)
+        const claudeChildren = await getChildPids(childPid)
         if (claudeChildren.length > 0) {
           claudeHasActiveChildren = true
         }
@@ -247,54 +267,73 @@ function scanTerminal(terminalId: string, info: TerminalRegistration): ScanResul
 function startPolling(mainWindow: BrowserWindow): void {
   if (pollInterval) return
 
-  pollInterval = setInterval(() => {
+  pollInterval = setInterval(async () => {
     if (mainWindow.isDestroyed()) {
       stopPolling()
       return
     }
 
-    for (const [terminalId, info] of registeredTerminals) {
-      const result = scanTerminal(terminalId, info)
+    if (pollBusy) return
+    pollBusy = true
 
-      // Update previous state
-      previousStates.set(terminalId, {
-        claudeState: result.claudeState,
-        previouslyHadClaude: result.previouslyHadClaude,
-      })
+    try {
+      // Scan all terminals concurrently
+      const entries = Array.from(registeredTerminals.entries())
+      const scanResults = await Promise.all(
+        entries.map(async ([terminalId, info]) => {
+          const result = await scanTerminal(terminalId, info)
+          return { terminalId, result }
+        })
+      )
 
-      // Auto-clear finished state after detecting it
-      if (result.claudeState === 'finished') {
-        setTimeout(() => {
-          const current = previousStates.get(terminalId)
-          if (current && current.claudeState === 'finished') {
-            previousStates.set(terminalId, {
-              claudeState: 'notRunning',
-              previouslyHadClaude: false,
-            })
-          }
-        }, 5000)
+      for (const { terminalId, result } of scanResults) {
+        // Update previous state
+        previousStates.set(terminalId, {
+          claudeState: result.claudeState,
+          previouslyHadClaude: result.previouslyHadClaude,
+        })
+
+        // Auto-clear finished state after detecting it
+        if (result.claudeState === 'finished') {
+          setTimeout(() => {
+            const current = previousStates.get(terminalId)
+            if (current && current.claudeState === 'finished') {
+              previousStates.set(terminalId, {
+                claudeState: 'notRunning',
+                previouslyHadClaude: false,
+              })
+            }
+          }, 5000)
+        }
+
+        // Send activity update to renderer
+        if (!mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(
+            SHELL_ACTIVITY_UPDATE,
+            terminalId,
+            result.terminalActivity,
+            result.claudeState,
+          )
+        }
       }
 
-      // Send activity update to renderer
-      mainWindow.webContents.send(
-        SHELL_ACTIVITY_UPDATE,
-        terminalId,
-        result.terminalActivity,
-        result.claudeState,
+      // --- CWD updates (concurrent) ---
+      const cwdResults = await Promise.all(
+        entries.map(async ([terminalId, info]) => {
+          const cwd = await getProcessCwd(info.shellPid)
+          return { terminalId, cwd }
+        })
       )
-    }
 
-      // --- CWD updates ---
-      for (const [terminalId, info] of registeredTerminals) {
-        const cwd = getProcessCwd(info.shellPid)
-        if (cwd) {
+      for (const { terminalId, cwd } of cwdResults) {
+        if (cwd && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send(SHELL_CWD_UPDATE, terminalId, cwd)
         }
       }
 
       // --- Port scan (async, non-blocking) ---
-      scanListeningPorts().then((portMap) => {
-        if (mainWindow.isDestroyed()) return
+      const portMap = await scanListeningPorts()
+      if (!mainWindow.isDestroyed()) {
         for (const [terminalId, ports] of portMap) {
           mainWindow.webContents.send(SHELL_PORTS_UPDATE, terminalId, ports.sort((a, b) => a - b))
         }
@@ -303,7 +342,10 @@ function startPolling(mainWindow: BrowserWindow): void {
             mainWindow.webContents.send(SHELL_PORTS_UPDATE, terminalId, [])
           }
         }
-      })
+      }
+    } finally {
+      pollBusy = false
+    }
   }, 2000)
 }
 

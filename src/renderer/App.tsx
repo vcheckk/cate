@@ -17,6 +17,7 @@ import CanvasToolbar from './canvas/CanvasToolbar'
 import Minimap from './canvas/Minimap'
 import { Sidebar } from './sidebar/Sidebar'
 import { FileExplorerSidebar } from './sidebar/FileExplorerSidebar'
+import { RightSidebar } from './sidebar/RightSidebar'
 const TerminalPanel = React.lazy(() => import('./panels/TerminalPanel'))
 const EditorPanel = React.lazy(() => import('./panels/EditorPanel'))
 const BrowserPanel = React.lazy(() => import('./panels/BrowserPanel'))
@@ -123,13 +124,9 @@ export default function App() {
     useAppStore.getState().createEditor(selectedWorkspaceId)
   }, [selectedWorkspaceId])
 
-  const onNewAIChat = useCallback(() => {
-    useAppStore.getState().createAIChat(selectedWorkspaceId)
-  }, [selectedWorkspaceId])
-
-  const onNewGit = useCallback(() => {
-    useAppStore.getState().createGit(selectedWorkspaceId)
-  }, [selectedWorkspaceId])
+const onNewGit = useCallback(() => {
+    useUIStore.getState().setRightSidebarTab('git')
+  }, [])
 
   const onZoomIn = useCallback(() => {
     useCanvasStore.getState().zoomAroundCenter(zoomLevel + 0.1)
@@ -322,7 +319,6 @@ export default function App() {
           onNewTerminal={onNewTerminal}
           onNewBrowser={onNewBrowser}
           onNewEditor={onNewEditor}
-          onNewAIChat={onNewAIChat}
           onNewGit={onNewGit}
           onZoomIn={onZoomIn}
           onZoomOut={onZoomOut}
@@ -331,6 +327,8 @@ export default function App() {
         {/* Shortcut hint overlay */}
         <ShortcutHintOverlay />
       </div>
+
+      <RightSidebar />
 
       {/* Modal overlays */}
       {showNodeSwitcher && <NodeSwitcher />}

@@ -93,10 +93,14 @@ export function PanelSwitcher() {
     if (!show) return
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Tab' && e.ctrlKey) {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'Tab') {
         e.preventDefault()
         e.stopPropagation()
-        setSelectedIndex((prev) => (prev + (e.shiftKey ? -1 : 1) + nodeList.length) % nodeList.length)
+        setSelectedIndex((prev) => (prev + 1) % nodeList.length)
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        e.stopPropagation()
+        setSelectedIndex((prev) => (prev - 1 + nodeList.length) % nodeList.length)
       } else if (e.key === 'Escape') {
         e.preventDefault()
         close()
@@ -106,18 +110,9 @@ export function PanelSwitcher() {
       }
     }
 
-    const handleKeyUp = (e: KeyboardEvent) => {
-      // When Ctrl is released, confirm selection
-      if (e.key === 'Control') {
-        selectItem(selectedIndex)
-      }
-    }
-
     document.addEventListener('keydown', handleKeyDown, { capture: true })
-    document.addEventListener('keyup', handleKeyUp, { capture: true })
     return () => {
       document.removeEventListener('keydown', handleKeyDown, { capture: true })
-      document.removeEventListener('keyup', handleKeyUp, { capture: true })
     }
   }, [show, selectedIndex, nodeList, close, selectItem])
 

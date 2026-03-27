@@ -271,7 +271,7 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutAction, StoredShortcut> = {
   toggleFileExplorer: storedShortcut('f', { command: true, shift: true }),
   toggleMinimap: storedShortcut('m', { command: true, shift: true }),
   nodeSwitcher: storedShortcut(' ', { control: true }),
-  panelSwitcher: storedShortcut('\t', { control: true }),
+  panelSwitcher: storedShortcut('e', { command: true }),
   commandPalette: storedShortcut('k', { command: true }),
   zoomIn: storedShortcut('=', { command: true }),
   zoomOut: storedShortcut('-', { command: true }),

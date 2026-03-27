@@ -100,12 +100,11 @@ export type AppStore = AppStoreState & AppStoreActions
 // Store
 // -----------------------------------------------------------------------------
 
-const defaultWorkspace = createDefaultWorkspace()
-
 export const useAppStore = create<AppStore>((set, get) => ({
   // --- State ---
-  workspaces: [defaultWorkspace],
-  selectedWorkspaceId: defaultWorkspace.id,
+  // Start empty — a default workspace is created during init only if no session is restored.
+  workspaces: [],
+  selectedWorkspaceId: '',
 
   // --- Workspace management ---
 
@@ -113,6 +112,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const ws = createDefaultWorkspace(name, rootPath)
     set((state) => ({
       workspaces: [...state.workspaces, ws],
+      // Auto-select if this is the first workspace
+      selectedWorkspaceId: state.workspaces.length === 0 ? ws.id : state.selectedWorkspaceId,
     }))
     return ws.id
   },
@@ -140,6 +141,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   removeWorkspace(id) {
+    // Dispose terminals before removing workspace state
+    get().closeAllPanels(id)
+
     set((state) => {
       const remaining = state.workspaces.filter((w) => w.id !== id)
       if (remaining.length === 0) {
@@ -334,6 +338,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         }
       }),
     }))
+    // Track in recent projects
+    window.electronAPI.recentProjectsAdd(rootPath)
   },
 
   setWorkspaceColor(wsId, color) {

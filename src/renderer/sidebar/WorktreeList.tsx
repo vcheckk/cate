@@ -2,7 +2,7 @@
 // WorktreeList — Collapsible list of local git worktrees.
 // =============================================================================
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { ChevronRight, ChevronDown, GitBranch } from 'lucide-react'
 
 interface GitWorktree {
@@ -21,13 +21,17 @@ interface WorktreeListProps {
 export const WorktreeList: React.FC<WorktreeListProps> = ({ rootPath, refreshKey }) => {
   const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
   const [collapsed, setCollapsed] = useState(true)
+  const hasAutoExpanded = useRef(false)
 
   const refresh = useCallback(async () => {
     try {
       const result = await window.electronAPI.gitWorktreeList(rootPath)
       setWorktrees(result)
-      // Auto-expand if there are multiple worktrees
-      if (result.length > 1) setCollapsed(false)
+      // Auto-expand on first load if there are multiple worktrees
+      if (result.length > 1 && !hasAutoExpanded.current) {
+        setCollapsed(false)
+        hasAutoExpanded.current = true
+      }
     } catch {
       setWorktrees([])
     }

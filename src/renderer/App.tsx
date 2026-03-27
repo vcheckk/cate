@@ -124,7 +124,7 @@ export default function App() {
     useAppStore.getState().createEditor(selectedWorkspaceId)
   }, [selectedWorkspaceId])
 
-const onNewGit = useCallback(() => {
+  const onNewGit = useCallback(() => {
     useUIStore.getState().setRightSidebarTab('git')
   }, [])
 

@@ -59,7 +59,11 @@ export const GitSidebarTab: React.FC = () => {
   const handleStage = useCallback(
     async (filePath: string) => {
       if (!rootPath) return
-      await window.electronAPI.gitStage(rootPath, filePath)
+      try {
+        await window.electronAPI.gitStage(rootPath, filePath)
+      } catch (err) {
+        console.error('Failed to stage:', err)
+      }
       refresh()
     },
     [rootPath, refresh],
@@ -68,7 +72,11 @@ export const GitSidebarTab: React.FC = () => {
   const handleUnstage = useCallback(
     async (filePath: string) => {
       if (!rootPath) return
-      await window.electronAPI.gitUnstage(rootPath, filePath)
+      try {
+        await window.electronAPI.gitUnstage(rootPath, filePath)
+      } catch (err) {
+        console.error('Failed to unstage:', err)
+      }
       refresh()
     },
     [rootPath, refresh],
@@ -76,10 +84,14 @@ export const GitSidebarTab: React.FC = () => {
 
   const handleCommit = useCallback(async () => {
     if (!rootPath || !commitMsg.trim()) return
-    await window.electronAPI.gitCommit(rootPath, commitMsg.trim())
-    setCommitMsg('')
-    setDiff('')
-    setSelectedFile(null)
+    try {
+      await window.electronAPI.gitCommit(rootPath, commitMsg.trim())
+      setCommitMsg('')
+      setDiff('')
+      setSelectedFile(null)
+    } catch (err) {
+      console.error('Failed to commit:', err)
+    }
     refresh()
   }, [rootPath, commitMsg, refresh])
 

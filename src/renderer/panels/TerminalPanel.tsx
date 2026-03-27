@@ -55,12 +55,19 @@ export default function TerminalPanel({
         terminalRegistry.attach(panelId, container)
 
         // 3. ResizeObserver — keep xterm sized to the container
+        //    RAF-gated to prevent multiple fit() calls per frame during drag resize
+        let fitPending = false
         const resizeObserver = new ResizeObserver(() => {
-          try {
-            entry.fitAddon.fit()
-          } catch {
-            // Ignore fit errors during rapid resizing or zero-size frames
-          }
+          if (fitPending) return
+          fitPending = true
+          requestAnimationFrame(() => {
+            fitPending = false
+            try {
+              entry.fitAddon.fit()
+            } catch {
+              // Ignore fit errors during rapid resizing or zero-size frames
+            }
+          })
         })
         resizeObserver.observe(container)
         resizeObserverRef.current = resizeObserver

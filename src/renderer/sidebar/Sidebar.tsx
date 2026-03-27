@@ -73,10 +73,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ isVisible }) => {
   useEffect(() => {
     if (!isResizingWidth) return
 
+    let rafPending = false
     const handleMouseMove = (e: MouseEvent) => {
-      const delta = e.clientX - startXRef.current
-      const newWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidthRef.current + delta))
-      setWidth(newWidth)
+      if (rafPending) return
+      rafPending = true
+      requestAnimationFrame(() => {
+        rafPending = false
+        const delta = e.clientX - startXRef.current
+        const newWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidthRef.current + delta))
+        setWidth(newWidth)
+      })
     }
 
     const handleMouseUp = () => {
@@ -108,14 +114,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ isVisible }) => {
   useEffect(() => {
     if (!isResizingDivider) return
 
+    let rafPending = false
     const handleMouseMove = (e: MouseEvent) => {
-      if (!sidebarRef.current) return
-      const sidebarHeight = sidebarRef.current.clientHeight - 28 - 32 // minus titlebar and footer
-      if (sidebarHeight <= 0) return
-      const delta = e.clientY - startYRef.current
-      const fractionDelta = delta / sidebarHeight
-      const newFraction = Math.min(0.85, Math.max(0.15, startFractionRef.current + fractionDelta))
-      setDividerFraction(newFraction)
+      if (rafPending) return
+      rafPending = true
+      requestAnimationFrame(() => {
+        rafPending = false
+        if (!sidebarRef.current) return
+        const sidebarHeight = sidebarRef.current.clientHeight - 28 - 32 // minus titlebar and footer
+        if (sidebarHeight <= 0) return
+        const delta = e.clientY - startYRef.current
+        const fractionDelta = delta / sidebarHeight
+        const newFraction = Math.min(0.85, Math.max(0.15, startFractionRef.current + fractionDelta))
+        setDividerFraction(newFraction)
+      })
     }
 
     const handleMouseUp = () => {

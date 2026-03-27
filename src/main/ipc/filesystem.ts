@@ -105,23 +105,27 @@ function watchStart(dirPath: string, mainWindow: BrowserWindow): void {
     ],
   })
 
-  watcher.on('add', (filePath: string) => {
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(FS_WATCH_EVENT, { type: 'create', path: filePath })
-    }
-  })
+  // Batch file watch events to prevent IPC storms during npm install, git checkout, etc.
+  let pendingEvents = new Map<string, { type: string; path: string }>()
+  let flushTimer: ReturnType<typeof setTimeout> | null = null
 
-  watcher.on('change', (filePath: string) => {
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(FS_WATCH_EVENT, { type: 'update', path: filePath })
+  const queueEvent = (type: string, filePath: string) => {
+    pendingEvents.set(filePath, { type, path: filePath })
+    if (!flushTimer) {
+      flushTimer = setTimeout(() => {
+        flushTimer = null
+        if (mainWindow.isDestroyed()) return
+        for (const event of pendingEvents.values()) {
+          mainWindow.webContents.send(FS_WATCH_EVENT, event)
+        }
+        pendingEvents = new Map()
+      }, 150)
     }
-  })
+  }
 
-  watcher.on('unlink', (filePath: string) => {
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(FS_WATCH_EVENT, { type: 'delete', path: filePath })
-    }
-  })
+  watcher.on('add', (filePath: string) => queueEvent('create', filePath))
+  watcher.on('change', (filePath: string) => queueEvent('update', filePath))
+  watcher.on('unlink', (filePath: string) => queueEvent('delete', filePath))
 
   watchers.set(dirPath, watcher)
 }

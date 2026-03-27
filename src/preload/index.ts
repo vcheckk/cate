@@ -31,8 +31,12 @@ import {
   SETTINGS_RESET,
   SESSION_SAVE,
   SESSION_LOAD,
+  SESSION_CLEAR,
   APP_GET_PATH,
+  MENU_OPEN_SETTINGS,
   DIALOG_OPEN_FOLDER,
+  RECENT_PROJECTS_GET,
+  RECENT_PROJECTS_ADD,
 } from '../shared/ipc-channels'
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -266,6 +270,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return ipcRenderer.invoke(SESSION_LOAD)
   },
 
+  sessionClear(): Promise<void> {
+    return ipcRenderer.invoke(SESSION_CLEAR)
+  },
+
   // ---------------------------------------------------------------------------
   // App
   // ---------------------------------------------------------------------------
@@ -280,5 +288,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   openFolderDialog(): Promise<string | null> {
     return ipcRenderer.invoke(DIALOG_OPEN_FOLDER)
+  },
+
+  // ---------------------------------------------------------------------------
+  // Recent Projects
+  // ---------------------------------------------------------------------------
+
+  recentProjectsGet(): Promise<string[]> {
+    return ipcRenderer.invoke(RECENT_PROJECTS_GET)
+  },
+
+  recentProjectsAdd(projectPath: string): Promise<void> {
+    return ipcRenderer.invoke(RECENT_PROJECTS_ADD, projectPath)
+  },
+
+  // ---------------------------------------------------------------------------
+  // Menu actions (main -> renderer)
+  // ---------------------------------------------------------------------------
+
+  onMenuOpenSettings(callback: () => void): () => void {
+    const listener = (): void => { callback() }
+    ipcRenderer.on(MENU_OPEN_SETTINGS, listener)
+    return () => { ipcRenderer.removeListener(MENU_OPEN_SETTINGS, listener) }
   },
 })

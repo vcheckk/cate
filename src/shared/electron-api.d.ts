@@ -149,6 +149,22 @@ export interface ElectronAPI {
 
   /** Open a native folder picker. Returns the selected path or null if canceled. */
   openFolderDialog(): Promise<string | null>
+
+  // ---------------------------------------------------------------------------
+  // Recent Projects
+  // ---------------------------------------------------------------------------
+
+  /** Get list of recently opened project folders. */
+  recentProjectsGet(): Promise<string[]>
+
+  /** Add a project path to the recent projects list. */
+  recentProjectsAdd(projectPath: string): Promise<void>
+
+  // ---------------------------------------------------------------------------
+  // Menu actions (main -> renderer)
+  // ---------------------------------------------------------------------------
+
+  onMenuOpenSettings(callback: () => void): () => void
 }
 
 declare global {

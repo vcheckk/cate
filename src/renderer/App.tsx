@@ -8,7 +8,6 @@ import { useAppStore } from './stores/appStore'
 import { useCanvasStore } from './stores/canvasStore'
 import type { PanelType, Point } from '../shared/types'
 import { useSettingsStore } from './stores/settingsStore'
-import { useStatusStore } from './stores/statusStore'
 import { useUIStore } from './stores/uiStore'
 import { useShortcuts } from './hooks/useShortcuts'
 import { useProcessMonitor } from './hooks/useProcessMonitor'
@@ -16,6 +15,7 @@ import Canvas from './canvas/Canvas'
 import CanvasNode from './canvas/CanvasNode'
 import CanvasToolbar from './canvas/CanvasToolbar'
 import { Sidebar } from './sidebar/Sidebar'
+import { FileExplorerSidebar } from './sidebar/FileExplorerSidebar'
 import TerminalPanel from './panels/TerminalPanel'
 import EditorPanel from './panels/EditorPanel'
 import BrowserPanel from './panels/BrowserPanel'
@@ -23,7 +23,7 @@ import { NodeSwitcher } from './ui/NodeSwitcher'
 import { CommandPalette } from './ui/CommandPalette'
 import { ShortcutHintOverlay } from './ui/ShortcutHintOverlay'
 import { SettingsWindow } from './settings/SettingsWindow'
-import { generateWelcomeBanner } from './ui/WelcomeBanner'
+import WelcomePage from './ui/WelcomePage'
 import { loadSession, restoreSession, restoreMultiWorkspaceSession, setupAutoSave, saveSession } from './lib/session'
 import type { MultiWorkspaceSession } from '../shared/types'
 
@@ -40,7 +40,6 @@ export default function App() {
   const selectedWorkspaceId = useAppStore((s) => s.selectedWorkspaceId)
   const nodes = useCanvasStore((s) => s.nodes)
   const zoomLevel = useCanvasStore((s) => s.zoomLevel)
-  const focusedNodeId = useCanvasStore((s) => s.focusedNodeId)
   const sidebarVisible = useUIStore((s) => s.sidebarVisible)
   const showNodeSwitcher = useUIStore((s) => s.showNodeSwitcher)
   const showCommandPalette = useUIStore((s) => s.showCommandPalette)
@@ -78,13 +77,11 @@ export default function App() {
         }
       }
 
-      // Fallback: create default terminal with welcome banner
-      if (!restored) {
-        const wsId = useAppStore.getState().selectedWorkspaceId
-        const panels = useAppStore.getState().selectedWorkspace()?.panels ?? {}
-        if (Object.keys(panels).length === 0) {
-          useAppStore.getState().createTerminal(wsId, generateWelcomeBanner())
-        }
+      // Fallback: create a default workspace with a welcome terminal only if
+      // no workspaces exist (fresh install or empty session).
+      if (useAppStore.getState().workspaces.length === 0) {
+        const wsId = useAppStore.getState().addWorkspace()
+        useAppStore.getState().selectWorkspace(wsId)
       }
 
       // Start auto-save
@@ -94,17 +91,12 @@ export default function App() {
   }, [initialized])
 
   // ---------------------------------------------------------------------------
-  // Settings window (Cmd+,)
+  // Settings window (Cmd+, via native menu)
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.metaKey && e.key === ',') {
-        e.preventDefault()
-        setShowSettings((s) => !s)
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
+    return window.electronAPI.onMenuOpenSettings(() => {
+      setShowSettings((s) => !s)
+    })
   }, [])
 
   // ---------------------------------------------------------------------------
@@ -202,15 +194,20 @@ export default function App() {
       {/* Sidebar */}
       <Sidebar isVisible={sidebarVisible} />
 
+      {/* File Explorer — separate collapsible sidebar */}
+      <FileExplorerSidebar />
+
       {/* Canvas workspace area */}
       <div className="flex-1 relative overflow-hidden">
+        {/* Welcome page overlay when no panels exist */}
+        {Object.keys(nodes).length === 0 && (
+          <WelcomePage workspaceId={selectedWorkspaceId} />
+        )}
+
         <Canvas onCreateAtPoint={onCreateAtPoint}>
           {sortedNodes.map((node) => {
             const panel = currentWorkspace?.panels[node.panelId]
             if (!panel) return null
-
-            const wsStatus = useStatusStore.getState().workspaces[selectedWorkspaceId]
-            const nodeActivity = wsStatus?.nodeActivity[node.id] ?? { type: 'normal' as const }
 
             return (
               <CanvasNode
@@ -219,9 +216,7 @@ export default function App() {
                 panelId={node.panelId}
                 panelType={panel.type}
                 title={panel.title}
-                isFocused={focusedNodeId === node.id}
-                activityState={nodeActivity}
-                zoomLevel={zoomLevel}
+                workspaceId={selectedWorkspaceId}
               >
                 {renderPanelContent(node.panelId, node.id)}
               </CanvasNode>

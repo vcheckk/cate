@@ -114,14 +114,14 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
   )
 
   const handleFileDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    if (e.dataTransfer.types.includes('application/canvaside-file')) {
+    if (e.dataTransfer.types.includes('application/cate-file')) {
       e.preventDefault()
       e.dataTransfer.dropEffect = 'copy'
     }
   }, [])
 
   const handleFileDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    const filePath = e.dataTransfer.getData('application/canvaside-file')
+    const filePath = e.dataTransfer.getData('application/cate-file')
     if (!filePath) return
     e.preventDefault()
     const rect = canvasRef.current?.getBoundingClientRect()

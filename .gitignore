@@ -6,6 +6,7 @@ dist/
 
 # Build artifacts
 build/
+release/
 test-results/
 
 # Claude Code local settings

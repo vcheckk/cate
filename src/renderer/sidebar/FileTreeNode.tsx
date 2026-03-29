@@ -230,7 +230,7 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
         draggable={!node.isDirectory}
         onDragStart={(e: React.DragEvent) => {
           if (node.isDirectory) return
-          e.dataTransfer.setData('application/canvaside-file', node.path)
+          e.dataTransfer.setData('application/cate-file', node.path)
           e.dataTransfer.effectAllowed = 'copy'
         }}
       >

@@ -23,7 +23,7 @@ function createWindow(): void {
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    title: 'CanvasIDE',
+    title: 'Cate',
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#1E1E24',
     icon: nativeImage.createFromPath(iconPath),
@@ -68,7 +68,7 @@ ipcMain.handle(HTTP_FETCH, async (_event, url: string): Promise<{ ok: boolean; s
     const timeout = setTimeout(() => controller.abort(), 15000)
     const res = await fetch(url, {
       signal: controller.signal,
-      headers: { 'User-Agent': 'CanvasIDE/1.0' },
+      headers: { 'User-Agent': 'Cate/1.0' },
     })
     clearTimeout(timeout)
     const text = await res.text()
@@ -166,7 +166,7 @@ ipcMain.handle('capture-page', async () => {
 })
 
 // Set app name before menu and window creation
-app.setName('CanvasIDE')
+app.setName('Cate')
 
 // Build application menu
 buildApplicationMenu()

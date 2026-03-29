@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CanvasIDE is a desktop application that provides an infinite zoomable canvas where editor panels, terminal panels, and browser panels float spatially (similar to Figma/Miro, but for coding). Built with Electron + React + TypeScript, styled with Tailwind CSS.
+Cate is a desktop application that provides an infinite zoomable canvas where editor panels, terminal panels, and browser panels float spatially (similar to Figma/Miro, but for coding). Built with Electron + React + TypeScript, styled with Tailwind CSS.
 
 ## Build System
 

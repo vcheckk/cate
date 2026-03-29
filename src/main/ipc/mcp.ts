@@ -111,7 +111,7 @@ export function registerHandlers(mainWindow: BrowserWindow): void {
             params: {
               protocolVersion: '2024-11-05',
               capabilities: {},
-              clientInfo: { name: 'CanvasIDE', version: '1.0.0' },
+              clientInfo: { name: 'Cate', version: '1.0.0' },
             },
           }) + '\n'
 

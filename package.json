@@ -1,15 +1,30 @@
 {
-  "name": "canvas-ide",
+  "name": "cate",
   "version": "0.1.0",
-  "productName": "CanvasIDE",
-  "description": "Infinite zoomable canvas IDE",
+  "productName": "Cate",
+  "description": "An infinite zoomable canvas IDE",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0-AI-UG/cate.git"
+  },
+  "homepage": "https://github.com/0-AI-UG/cate",
+  "bugs": {
+    "url": "https://github.com/0-AI-UG/cate/issues"
+  },
+  "author": "0-AI UG",
   "main": "dist/main/index.js",
   "scripts": {
     "postinstall": "bash scripts/patch-electron-name.sh",
     "predev": "bash scripts/patch-electron-name.sh",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "preview": "electron-vite preview"
+    "preview": "electron-vite preview",
+    "icons": "node scripts/generate-icons.js",
+    "package": "npm run icons && electron-vite build && electron-builder",
+    "package:mac": "npm run icons && electron-vite build && electron-builder --mac",
+    "package:win": "npm run icons && electron-vite build && electron-builder --win",
+    "package:linux": "npm run icons && electron-vite build && electron-builder --linux"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -34,6 +49,9 @@
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.0",
     "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "sharp": "^0.33.0",
+    "to-ico": "^1.1.5",
     "electron-vite": "^2.3.0",
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",

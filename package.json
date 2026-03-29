@@ -12,7 +12,10 @@
   "bugs": {
     "url": "https://github.com/0-AI-UG/cate/issues"
   },
-  "author": "0-AI UG",
+  "author": {
+    "name": "0-AI UG",
+    "email": "hello@0-ai.org"
+  },
   "main": "dist/main/index.js",
   "scripts": {
     "postinstall": "bash scripts/patch-electron-name.sh",

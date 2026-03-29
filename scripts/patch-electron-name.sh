@@ -4,6 +4,8 @@ PLIST="node_modules/electron/dist/Electron.app/Contents/Info.plist"
 if [ -f "$PLIST" ]; then
   /usr/libexec/PlistBuddy -c "Set CFBundleDisplayName Cate" "$PLIST" 2>/dev/null
   /usr/libexec/PlistBuddy -c "Set CFBundleName Cate" "$PLIST" 2>/dev/null
-  # Also replace the .icns
-  cp build/icon.icns "node_modules/electron/dist/Electron.app/Contents/Resources/electron.icns" 2>/dev/null
+  # Also replace the .icns (may not exist yet before first icon generation)
+  if [ -f "build/icon.icns" ]; then
+    cp build/icon.icns "node_modules/electron/dist/Electron.app/Contents/Resources/electron.icns"
+  fi
 fi

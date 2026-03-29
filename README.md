@@ -42,6 +42,11 @@ Grab the latest release for your platform:
 | Windows | [Cate-Setup.exe](https://github.com/0-AI-UG/cate/releases/latest) |
 | Linux | [Cate.AppImage](https://github.com/0-AI-UG/cate/releases/latest) |
 
+> **macOS note:** The app is not code-signed yet. After downloading, macOS may say the app is "damaged." To fix this, open Terminal and run:
+> ```bash
+> xattr -cr /Applications/Cate.app
+> ```
+
 ## Build from Source
 
 ### Prerequisites

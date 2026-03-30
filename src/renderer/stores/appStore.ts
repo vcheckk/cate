@@ -10,11 +10,9 @@ import type {
   PanelType,
   Point,
   Size,
-  DockZonePosition,
 } from '../../shared/types'
 import { PANEL_DEFAULT_SIZES, ZOOM_DEFAULT } from '../../shared/types'
 import { useCanvasStore } from './canvasStore'
-import { useDockStore } from './dockStore'
 import { terminalRegistry } from '../lib/terminalRegistry'
 import { deferredSnapshots, restoreDeferredWorkspace } from '../lib/session'
 
@@ -77,11 +75,9 @@ interface AppStoreActions {
   createTerminal: (workspaceId: string, initialInput?: string, position?: Point) => string
   createBrowser: (workspaceId: string, url?: string, position?: Point) => string
   createEditor: (workspaceId: string, filePath?: string, position?: Point) => string
-  createAIChat: (workspaceId: string, position?: Point) => string
   createGit: (workspaceId: string, position?: Point) => string
   createFileExplorer: (workspaceId: string, position?: Point) => string
   createProjectList: (workspaceId: string, position?: Point) => string
-  createPanelInDock: (workspaceId: string, type: PanelType, zone: DockZonePosition, title: string) => string
 
   // Panel management
   closePanel: (workspaceId: string, panelId: string) => void
@@ -160,13 +156,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
         ws.focusedNodeId,
         ws.regions,
       )
-
-      // Load or reset dock state for the incoming workspace
-      if (ws.dockLayout) {
-        useDockStore.getState().loadDockLayout(ws.dockLayout)
-      } else {
-        useDockStore.getState().reset()
-      }
 
       // Check for deferred restore (lazy workspace loading)
       if (deferredSnapshots.has(id)) {
@@ -298,28 +287,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return panelId
   },
 
-  createAIChat(workspaceId, position?) {
-    const panelId = generateId()
-    const panel: PanelState = {
-      id: panelId,
-      type: 'aiChat',
-      title: 'AI Chat',
-      isDirty: false,
-    }
-    set((state) => ({
-      workspaces: state.workspaces.map((ws) =>
-        ws.id === workspaceId
-          ? { ...ws, panels: { ...ws.panels, [panelId]: panel } }
-          : ws,
-      ),
-    }))
-    if (workspaceId === get().selectedWorkspaceId) {
-      const nodeId = useCanvasStore.getState().addNode(panelId, 'aiChat', position)
-      useCanvasStore.getState().focusAndCenter(nodeId)
-    }
-    return panelId
-  },
-
   createGit(workspaceId, position?) {
     const panelId = generateId()
     const panel: PanelState = {
@@ -386,25 +353,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return panelId
   },
 
-  createPanelInDock(workspaceId, type, zone, title) {
-    const panelId = generateId()
-    const panel: PanelState = {
-      id: panelId,
-      type,
-      title,
-      isDirty: false,
-    }
-    set((state) => ({
-      workspaces: state.workspaces.map((ws) =>
-        ws.id === workspaceId
-          ? { ...ws, panels: { ...ws.panels, [panelId]: panel } }
-          : ws,
-      ),
-    }))
-    useDockStore.getState().dockPanel(panelId, zone)
-    return panelId
-  },
-
   // --- Panel management ---
 
   closePanel(workspaceId, panelId) {
@@ -433,8 +381,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
     }
 
-    // Also remove from dock zones if docked
-    useDockStore.getState().removePanelFromZones(panelId)
   },
 
   updatePanelTitle(workspaceId, panelId, title) {
@@ -487,7 +433,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   syncCanvasToWorkspace(workspaceId) {
     const canvas = useCanvasStore.getState()
-    const dock = useDockStore.getState()
+
     set((state) => ({
       workspaces: state.workspaces.map((ws) =>
         ws.id === workspaceId
@@ -498,7 +444,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
               viewportOffset: { ...canvas.viewportOffset },
               zoomLevel: canvas.zoomLevel,
               focusedNodeId: canvas.focusedNodeId,
-              dockLayout: dock.serialize(),
             }
           : ws,
       ),

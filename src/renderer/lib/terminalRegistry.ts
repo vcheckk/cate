@@ -383,21 +383,18 @@ function has(panelId: string): boolean {
 // Search API
 // ---------------------------------------------------------------------------
 
-/** Finds the next match for query in the terminal scrollback. Returns true if a match was found. */
 function findNext(panelId: string, query: string): boolean {
   const entry = registry.get(panelId)
   if (!entry?.searchAddon) return false
   return entry.searchAddon.findNext(query)
 }
 
-/** Finds the previous match for query in the terminal scrollback. Returns true if a match was found. */
 function findPrevious(panelId: string, query: string): boolean {
   const entry = registry.get(panelId)
   if (!entry?.searchAddon) return false
   return entry.searchAddon.findPrevious(query)
 }
 
-/** Clears all search highlight decorations from the terminal. */
 function clearSearch(panelId: string): void {
   const entry = registry.get(panelId)
   entry?.searchAddon?.clearDecorations()

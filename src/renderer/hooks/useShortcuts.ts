@@ -9,7 +9,6 @@ import { useCanvasStore } from '../stores/canvasStore'
 import { useAppStore } from '../stores/appStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useUIStore } from '../stores/uiStore'
-import { useDockStore } from '../stores/dockStore'
 
 /**
  * Ensures the workspace has a rootPath before proceeding.
@@ -145,25 +144,11 @@ export function useShortcuts(): void {
           break
 
         case 'closePanel': {
-          // First check canvas focused node
           const focusedNodeId = canvasStore().focusedNodeId
           if (focusedNodeId) {
             const node = canvasStore().nodes[focusedNodeId]
             if (node) {
               appStore().closePanel(selectedWorkspaceId, node.panelId)
-            }
-            break
-          }
-          // If no canvas node focused, try closing the active docked panel
-          const dockState = useDockStore.getState()
-          for (const position of ['left', 'right', 'bottom'] as const) {
-            const zone = dockState.zones[position]
-            if (zone.panelIds.length > 0 && !zone.collapsed) {
-              const activePanelId = zone.panelIds[zone.activePanelIndex]
-              if (activePanelId) {
-                appStore().closePanel(selectedWorkspaceId, activePanelId)
-                break
-              }
             }
           }
           break
@@ -266,17 +251,6 @@ export function useShortcuts(): void {
           useUIStore.getState().setShowGlobalSearch(true)
           break
 
-        case 'toggleLeftDock':
-          useDockStore.getState().toggleZoneCollapse('left')
-          break
-
-        case 'toggleRightDock':
-          useDockStore.getState().toggleZoneCollapse('right')
-          break
-
-        case 'toggleBottomDock':
-          useDockStore.getState().toggleZoneCollapse('bottom')
-          break
       }
     }
 

@@ -49,10 +49,6 @@ import {
   LAYOUT_LIST,
   LAYOUT_LOAD,
   LAYOUT_DELETE,
-  WINDOW_DETACH_PANEL,
-  WINDOW_REATTACH_PANEL,
-  WINDOW_DETACHED_CLOSED,
-  PLUGIN_LIST,
   SHELL_WHICH,
   FS_DELETE,
   SHELL_SHOW_IN_FOLDER,
@@ -376,34 +372,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   layoutDelete(name: string): Promise<void> {
     return ipcRenderer.invoke(LAYOUT_DELETE, name)
-  },
-
-  // ---------------------------------------------------------------------------
-  // Window (Task 23: Multi-Window Support scaffold)
-  // ---------------------------------------------------------------------------
-
-  detachPanel(options: { panelId: string; panelType: string; title: string; width: number; height: number }): Promise<number> {
-    return ipcRenderer.invoke(WINDOW_DETACH_PANEL, options)
-  },
-
-  reattachPanel(windowId: number): Promise<void> {
-    return ipcRenderer.invoke(WINDOW_REATTACH_PANEL, windowId)
-  },
-
-  onDetachedWindowClosed(callback: (data: { windowId: number; panelId: string }) => void): () => void {
-    const listener = (_event: Electron.IpcRendererEvent, data: { windowId: number; panelId: string }): void => {
-      callback(data)
-    }
-    ipcRenderer.on(WINDOW_DETACHED_CLOSED, listener)
-    return () => { ipcRenderer.removeListener(WINDOW_DETACHED_CLOSED, listener) }
-  },
-
-  // ---------------------------------------------------------------------------
-  // Plugins (Task 25: Plugin/Extension System scaffold)
-  // ---------------------------------------------------------------------------
-
-  pluginList(): Promise<Array<{ name: string; version: string; description: string }>> {
-    return ipcRenderer.invoke(PLUGIN_LIST)
   },
 
   capturePage(): Promise<string | null> {

@@ -6,11 +6,8 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useCanvasStore } from '../stores/canvasStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { useUIStore } from '../stores/uiStore'
-import { useDockStore } from '../stores/dockStore'
 import { snap, snapToEdges } from '../canvas/layoutEngine'
-import type { Point, Rect, DockZonePosition } from '../../shared/types'
-import { DOCK_EDGE_TRIGGER_PX } from '../../shared/types'
+import type { Point, Rect } from '../../shared/types'
 
 interface DragState {
   lastClientX: number
@@ -82,20 +79,6 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
           dragStartedRef.current = true
           wasDraggedRef.current = true
           document.body.classList.add('canvas-interacting')
-        }
-
-        // Dock edge detection — check cursor position against viewport edges
-        const uiState = useUIStore.getState()
-        let dropTarget: DockZonePosition | null = null
-        if (ev.clientX < DOCK_EDGE_TRIGGER_PX) {
-          dropTarget = 'left'
-        } else if (ev.clientX > window.innerWidth - DOCK_EDGE_TRIGGER_PX) {
-          dropTarget = 'right'
-        } else if (ev.clientY > window.innerHeight - DOCK_EDGE_TRIGGER_PX) {
-          dropTarget = 'bottom'
-        }
-        if (uiState.dockDropTarget !== dropTarget) {
-          useUIStore.getState().setDockDropTarget(dropTarget)
         }
 
         const zoom = useCanvasStore.getState().zoomLevel
@@ -228,29 +211,6 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
       const handleMouseUp = () => {
         window.removeEventListener('mousemove', handleMouseMove)
         window.removeEventListener('mouseup', handleMouseUp)
-
-        // Check for dock drop
-        const dockTarget = useUIStore.getState().dockDropTarget
-        if (dockTarget && dragStartedRef.current) {
-          const currentNode = useCanvasStore.getState().nodes[nodeId]
-          if (currentNode) {
-            useDockStore.getState().dockPanel(currentNode.panelId, dockTarget)
-            useCanvasStore.getState().removeNode(nodeId)
-          }
-          useUIStore.getState().setDockDropTarget(null)
-          isDraggingRef.current = false
-          dragStartedRef.current = false
-          document.body.classList.remove('canvas-interacting')
-          if (rafId.current) {
-            cancelAnimationFrame(rafId.current)
-            rafId.current = 0
-          }
-          pendingOrigin.current = null
-          useCanvasStore.getState().clearSnapGuides()
-          dragStateRef.current = null
-          return // Early return — skip normal drop logic
-        }
-        useUIStore.getState().setDockDropTarget(null) // Clear indicator even if not docking
 
         isDraggingRef.current = false
         dragStartedRef.current = false

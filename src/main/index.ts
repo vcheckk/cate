@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, nativeImage } from 'electron'
 import path from 'path'
-import { WINDOW_DETACH_PANEL, WINDOW_REATTACH_PANEL, WINDOW_DETACHED_CLOSED, SHELL_SHOW_IN_FOLDER, HTTP_FETCH } from '../shared/ipc-channels'
+import { SHELL_SHOW_IN_FOLDER, HTTP_FETCH } from '../shared/ipc-channels'
 import { registerHandlers as registerTerminalHandlers, flushAllLoggers } from './ipc/terminal'
 import { registerHandlers as registerFilesystemHandlers } from './ipc/filesystem'
 import { registerHandlers as registerGitHandlers } from './ipc/git'
@@ -11,9 +11,6 @@ import { registerHandlers as registerMCPHandlers } from './ipc/mcp'
 import { buildApplicationMenu } from './menu'
 
 let mainWindow: BrowserWindow | null = null
-
-// Track detached windows: windowId -> { panelId, panelType }
-const detachedWindows = new Map<number, { panelId: string; panelType: string }>()
 
 function createWindow(): void {
   const iconPath = path.join(__dirname, '../../build/icon-1024.png')
@@ -75,67 +72,6 @@ ipcMain.handle(HTTP_FETCH, async (_event, url: string): Promise<{ ok: boolean; s
     return { ok: res.ok, status: res.status, text }
   } catch (err: any) {
     return { ok: false, status: 0, text: err.message || 'Fetch failed' }
-  }
-})
-
-// Window: Detach Panel (Task 23: Multi-Window Support)
-ipcMain.handle(WINDOW_DETACH_PANEL, async (_event, options: {
-  panelId: string
-  panelType: string
-  title: string
-  width: number
-  height: number
-}) => {
-  const detachedWindow = new BrowserWindow({
-    width: options.width,
-    height: options.height,
-    title: options.title,
-    backgroundColor: '#1E1E24',
-    webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      webviewTag: true,
-    },
-  })
-
-  const params = new URLSearchParams({
-    detached: 'true',
-    panelId: options.panelId,
-    panelType: options.panelType,
-    title: options.title,
-  })
-
-  if (process.env.ELECTRON_RENDERER_URL) {
-    detachedWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}?${params.toString()}`)
-  } else {
-    detachedWindow.loadFile(path.join(__dirname, '../renderer/index.html'), {
-      query: Object.fromEntries(params),
-    })
-  }
-
-  detachedWindows.set(detachedWindow.id, { panelId: options.panelId, panelType: options.panelType })
-
-  // Notify main window when detached window closes
-  detachedWindow.on('closed', () => {
-    const info = detachedWindows.get(detachedWindow.id)
-    detachedWindows.delete(detachedWindow.id)
-    if (mainWindow && !mainWindow.isDestroyed() && info) {
-      mainWindow.webContents.send(WINDOW_DETACHED_CLOSED, {
-        windowId: detachedWindow.id,
-        panelId: info.panelId,
-      })
-    }
-  })
-
-  return detachedWindow.id
-})
-
-// Window: Reattach Panel
-ipcMain.handle(WINDOW_REATTACH_PANEL, async (_event, windowId: number) => {
-  const win = BrowserWindow.fromId(windowId)
-  if (win && !win.isDestroyed()) {
-    win.close()
   }
 })
 

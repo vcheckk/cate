@@ -4,9 +4,8 @@
 // =============================================================================
 
 import React from 'react'
-import { Terminal, Globe, FileText, Minus, Plus, PanelLeft, PanelRight, PanelBottom } from 'lucide-react'
+import { Terminal, Globe, FileText, Minus, Plus } from 'lucide-react'
 import { useCanvasStore } from '../stores/canvasStore'
-import { useDockStore } from '../stores/dockStore'
 
 interface CanvasToolbarProps {
   zoom: number
@@ -45,12 +44,6 @@ const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
 }) => {
   const zoomText = `${Math.round(zoom * 100)}%`
 
-  const leftHasPanels = useDockStore(s => s.zones.left.panelIds.length > 0)
-  const rightHasPanels = useDockStore(s => s.zones.right.panelIds.length > 0)
-  const bottomHasPanels = useDockStore(s => s.zones.bottom.panelIds.length > 0)
-
-  const hasDockPanels = leftHasPanels || rightHasPanels || bottomHasPanels
-
   return (
     <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50">
       <div className="backdrop-blur-xl bg-white/5 border border-white/[0.12] shadow-lg rounded-full">
@@ -69,42 +62,6 @@ const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
 
           {/* Divider */}
           <div className="w-px h-5 bg-white/[0.15] mx-1" />
-
-          {/* Dock zone toggles — only shown when a zone has panels */}
-          {hasDockPanels && (
-            <>
-              {leftHasPanels && (
-                <ToolbarButton
-                  onClick={() => useDockStore.getState().toggleZoneCollapse('left')}
-                  title="Toggle Left Dock"
-                  size="zoom"
-                >
-                  <PanelLeft size={14} className="text-white/85" />
-                </ToolbarButton>
-              )}
-              {bottomHasPanels && (
-                <ToolbarButton
-                  onClick={() => useDockStore.getState().toggleZoneCollapse('bottom')}
-                  title="Toggle Bottom Dock"
-                  size="zoom"
-                >
-                  <PanelBottom size={14} className="text-white/85" />
-                </ToolbarButton>
-              )}
-              {rightHasPanels && (
-                <ToolbarButton
-                  onClick={() => useDockStore.getState().toggleZoneCollapse('right')}
-                  title="Toggle Right Dock"
-                  size="zoom"
-                >
-                  <PanelRight size={14} className="text-white/85" />
-                </ToolbarButton>
-              )}
-
-              {/* Divider — only between dock toggles and zoom controls */}
-              <div className="w-px h-5 bg-white/[0.15] mx-1" />
-            </>
-          )}
 
           {/* Zoom controls */}
           <ToolbarButton onClick={onZoomOut} title="Zoom Out" size="zoom">

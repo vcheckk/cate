@@ -16,11 +16,9 @@ import CanvasNode from './canvas/CanvasNode'
 import CanvasToolbar from './canvas/CanvasToolbar'
 import Minimap from './canvas/Minimap'
 import { Sidebar, RightSidebar } from './sidebar/Sidebar'
-import { DockZone, DockDropIndicator } from './dock'
 const TerminalPanel = React.lazy(() => import('./panels/TerminalPanel'))
 const EditorPanel = React.lazy(() => import('./panels/EditorPanel'))
 const BrowserPanel = React.lazy(() => import('./panels/BrowserPanel'))
-const AIChatPanel = React.lazy(() => import('./panels/AIChatPanel'))
 const GitPanel = React.lazy(() => import('./panels/GitPanel'))
 const FileExplorerPanel = React.lazy(() => import('./panels/FileExplorerPanel'))
 const ProjectListPanel = React.lazy(() => import('./panels/ProjectListPanel'))
@@ -216,9 +214,6 @@ export default function App() {
         case 'editor':
           store.createEditor(selectedWorkspaceId, undefined, canvasPoint)
           break
-        case 'aiChat':
-          store.createAIChat(selectedWorkspaceId, canvasPoint)
-          break
         case 'git':
           store.createGit(selectedWorkspaceId, canvasPoint)
           break
@@ -274,15 +269,6 @@ export default function App() {
             />
           )
           break
-        case 'aiChat':
-          content = (
-            <AIChatPanel
-              panelId={panelId}
-              workspaceId={selectedWorkspaceId}
-              nodeId={nodeId}
-            />
-          )
-          break
         case 'git':
           content = (
             <GitPanel
@@ -328,54 +314,43 @@ export default function App() {
       {/* Sidebar */}
       <Sidebar isVisible={sidebarVisible} />
 
-      {/* Canvas workspace area with dock zones */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex-1 flex overflow-hidden">
-          <DockZone position="left" renderPanelContent={renderPanelContent} />
+      {/* Canvas workspace area */}
+      <div className="flex-1 relative overflow-hidden">
+        {/* Welcome page overlay when no panels exist */}
+        {nodeIds.length === 0 && (
+          <WelcomePage workspaceId={selectedWorkspaceId} />
+        )}
 
-          <div className="flex-1 relative overflow-hidden">
-            {/* Welcome page overlay when no panels exist */}
-            {nodeIds.length === 0 && (
-              <WelcomePage workspaceId={selectedWorkspaceId} />
-            )}
-
-            <Canvas onCreateAtPoint={onCreateAtPoint}>
-              {nodeIds.map((nodeId) => (
-                <CanvasNodeWrapper
-                  key={nodeId}
-                  nodeId={nodeId}
-                  zoomLevel={zoomLevel}
-                  renderPanelContent={renderPanelContent}
-                />
-              ))}
-            </Canvas>
-
-            {/* Minimap overlay */}
-            {showMinimap && <Minimap />}
-
-            {/* Toolbar overlay */}
-            <CanvasToolbar
-              zoom={zoomLevel}
-              onNewTerminal={onNewTerminal}
-              onNewBrowser={onNewBrowser}
-              onNewEditor={onNewEditor}
-              onZoomIn={onZoomIn}
-              onZoomOut={onZoomOut}
+        <Canvas onCreateAtPoint={onCreateAtPoint}>
+          {nodeIds.map((nodeId) => (
+            <CanvasNodeWrapper
+              key={nodeId}
+              nodeId={nodeId}
+              zoomLevel={zoomLevel}
+              renderPanelContent={renderPanelContent}
             />
+          ))}
+        </Canvas>
 
-            {/* Shortcut hint overlay */}
-            <ShortcutHintOverlay />
-          </div>
+        {/* Minimap overlay */}
+        {showMinimap && <Minimap />}
 
-          <DockZone position="right" renderPanelContent={renderPanelContent} />
-        </div>
-        <DockZone position="bottom" renderPanelContent={renderPanelContent} />
+        {/* Toolbar overlay */}
+        <CanvasToolbar
+          zoom={zoomLevel}
+          onNewTerminal={onNewTerminal}
+          onNewBrowser={onNewBrowser}
+          onNewEditor={onNewEditor}
+          onZoomIn={onZoomIn}
+          onZoomOut={onZoomOut}
+        />
+
+        {/* Shortcut hint overlay */}
+        <ShortcutHintOverlay />
       </div>
 
       {/* Right Sidebar */}
       <RightSidebar />
-
-      <DockDropIndicator />
 
       {/* Modal overlays */}
       {showNodeSwitcher && <NodeSwitcher />}

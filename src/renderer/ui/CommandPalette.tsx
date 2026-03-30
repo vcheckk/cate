@@ -138,18 +138,6 @@ function UploadIcon() {
   )
 }
 
-function BotIcon() {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="11" width="18" height="10" rx="2" ry="2" />
-      <circle cx="12" cy="5" r="2" />
-      <line x1="12" y1="7" x2="12" y2="11" />
-      <line x1="8" y1="16" x2="8" y2="16" />
-      <line x1="16" y1="16" x2="16" y2="16" />
-    </svg>
-  )
-}
-
 // -----------------------------------------------------------------------------
 // Component
 // -----------------------------------------------------------------------------
@@ -162,7 +150,6 @@ export const CommandPalette: React.FC = () => {
   const createTerminal = useAppStore((s) => s.createTerminal)
   const createBrowser = useAppStore((s) => s.createBrowser)
   const createEditor = useAppStore((s) => s.createEditor)
-  const createAIChat = useAppStore((s) => s.createAIChat)
   const toggleSidebar = useUIStore((s) => s.toggleSidebar)
   const setActiveRightSidebarView = useUIStore((s) => s.setActiveRightSidebarView)
   const setZoom = useCanvasStore((s) => s.setZoom)
@@ -213,13 +200,6 @@ export const CommandPalette: React.FC = () => {
         shortcutText: '\u2318\u21E7E',
         icon: <FileTextIcon />,
         action: () => createEditor(selectedWorkspaceId),
-      },
-      {
-        id: 'newAIChat',
-        title: 'New AI Chat',
-        shortcutText: '',
-        icon: <BotIcon />,
-        action: () => createAIChat(selectedWorkspaceId),
       },
       {
         id: 'toggleSidebar',
@@ -386,7 +366,7 @@ export const CommandPalette: React.FC = () => {
                 case 'terminal': useAppStore.getState().createTerminal(wsId, undefined, node.origin); break
                 case 'editor': useAppStore.getState().createEditor(wsId, node.filePath, node.origin); break
                 case 'browser': useAppStore.getState().createBrowser(wsId, node.url, node.origin); break
-                case 'aiChat': useAppStore.getState().createAIChat(wsId, node.origin); break
+
               }
             }
 
@@ -407,7 +387,6 @@ export const CommandPalette: React.FC = () => {
       createTerminal,
       createBrowser,
       createEditor,
-      createAIChat,
       toggleSidebar,
       setActiveRightSidebarView,
       setShowNodeSwitcher,

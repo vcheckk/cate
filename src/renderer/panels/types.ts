@@ -44,8 +44,6 @@ export function panelIcon(type: PanelType): string {
       return 'Globe'
     case 'editor':
       return 'FileText'
-    case 'aiChat':
-      return 'Bot'
     case 'git':
       return 'GitBranch'
     case 'fileExplorer':
@@ -64,8 +62,6 @@ export function panelColor(type: PanelType): string {
       return '#4A9EFF' // blue
     case 'editor':
       return '#FF9F0A' // orange
-    case 'aiChat':
-      return '#AF52DE' // purple
     case 'git':
       return '#FF3B30' // red
     case 'fileExplorer':

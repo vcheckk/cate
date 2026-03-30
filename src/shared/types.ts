@@ -26,7 +26,7 @@ export interface Rect {
 // Panel types
 // -----------------------------------------------------------------------------
 
-export type PanelType = 'terminal' | 'browser' | 'editor' | 'aiChat' | 'git' | 'fileExplorer' | 'projectList'
+export type PanelType = 'terminal' | 'browser' | 'editor' | 'git' | 'fileExplorer' | 'projectList'
 
 // -----------------------------------------------------------------------------
 // AI Tool Configuration
@@ -130,37 +130,6 @@ export interface CanvasAnnotation {
 }
 
 // -----------------------------------------------------------------------------
-// Dock system types
-// -----------------------------------------------------------------------------
-
-export type DockZonePosition = 'left' | 'right' | 'bottom'
-
-export type PanelLocation =
-  | { type: 'canvas' }
-  | { type: 'dock'; zone: DockZonePosition; tabIndex: number }
-  | { type: 'detached'; windowId: number }
-
-export interface DockZoneState {
-  position: DockZonePosition
-  panelIds: string[]
-  activePanelIndex: number
-  size: number
-  collapsed: boolean
-}
-
-export interface DockLayoutState {
-  zones: Record<DockZonePosition, DockZoneState>
-}
-
-export const DOCK_ZONE_DEFAULTS: Record<DockZonePosition, { size: number; minSize: number }> = {
-  left: { size: 300, minSize: 180 },
-  right: { size: 350, minSize: 180 },
-  bottom: { size: 250, minSize: 120 },
-}
-
-export const DOCK_EDGE_TRIGGER_PX = 60
-
-// -----------------------------------------------------------------------------
 // LOD state (level-of-detail for zoom)
 // -----------------------------------------------------------------------------
 
@@ -194,7 +163,6 @@ export interface WorkspaceState {
   zoomLevel: number
   viewportOffset: Point
   focusedNodeId: CanvasNodeId | null
-  dockLayout?: DockLayoutState
 }
 
 // -----------------------------------------------------------------------------
@@ -293,9 +261,6 @@ export type ShortcutAction =
   | 'saveFile'
   | 'zoomToFit'
   | 'globalSearch'
-  | 'toggleLeftDock'
-  | 'toggleRightDock'
-  | 'toggleBottomDock'
 
 export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   'newTerminal',
@@ -316,9 +281,6 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   'saveFile',
   'zoomToFit',
   'globalSearch',
-  'toggleLeftDock',
-  'toggleRightDock',
-  'toggleBottomDock',
 ]
 
 export const SHORTCUT_DISPLAY_NAMES: Record<ShortcutAction, string> = {
@@ -340,9 +302,6 @@ export const SHORTCUT_DISPLAY_NAMES: Record<ShortcutAction, string> = {
   saveFile: 'Save File',
   zoomToFit: 'Zoom to Fit',
   globalSearch: 'Global Search',
-  toggleLeftDock: 'Toggle Left Dock',
-  toggleRightDock: 'Toggle Right Dock',
-  toggleBottomDock: 'Toggle Bottom Dock',
 }
 
 export const DEFAULT_SHORTCUTS: Record<ShortcutAction, StoredShortcut> = {
@@ -364,9 +323,6 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutAction, StoredShortcut> = {
   saveFile: storedShortcut('s', { command: true }),
   zoomToFit: storedShortcut('1', { command: true }),
   globalSearch: storedShortcut('h', { command: true, shift: true }),
-  toggleLeftDock: storedShortcut('b', { command: true, option: true }),
-  toggleRightDock: storedShortcut('j', { command: true, option: true }),
-  toggleBottomDock: storedShortcut('y', { command: true, option: true }),
 }
 
 // -----------------------------------------------------------------------------
@@ -418,22 +374,6 @@ export interface NodeSnapshot {
   regionId?: string
 }
 
-export interface DockSnapshotPanel {
-  panelId: string
-  panelType: PanelType
-  title: string
-  filePath?: string | null
-  url?: string | null
-}
-
-export interface DockZoneSnapshot {
-  panelIds: string[]
-  activePanelIndex: number
-  size: number
-  collapsed: boolean
-  panels: DockSnapshotPanel[]
-}
-
 export interface SessionSnapshot {
   workspaceId?: string
   workspaceName: string
@@ -442,7 +382,6 @@ export interface SessionSnapshot {
   zoomLevel: number
   nodes: NodeSnapshot[]
   regions?: Record<string, CanvasRegion>
-  dockLayout?: Record<DockZonePosition, DockZoneSnapshot>
 }
 
 export interface MultiWorkspaceSession {
@@ -504,12 +443,6 @@ export interface AppSettings {
   sidebarTintOpacity: number
   showFileExplorerOnLaunch: boolean
 
-  // Notifications
-  soundNotificationsEnabled: boolean
-  visualNotificationsEnabled: boolean
-
-  // Plugins (Task 25: Plugin/Extension System scaffold)
-  pluginDirectory: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -543,12 +476,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sidebarTintOpacity: 1.0,
   showFileExplorerOnLaunch: false,
 
-  // Notifications
-  soundNotificationsEnabled: true,
-  visualNotificationsEnabled: true,
-
-  // Plugins (Task 25: Plugin/Extension System scaffold)
-  pluginDirectory: '',
 }
 
 // -----------------------------------------------------------------------------
@@ -559,7 +486,6 @@ export const PANEL_DEFAULT_SIZES: Record<PanelType, Size> = {
   terminal: { width: 640, height: 400 },
   browser: { width: 800, height: 600 },
   editor: { width: 600, height: 500 },
-  aiChat: { width: 400, height: 600 },
   git: { width: 500, height: 600 },
   fileExplorer: { width: 300, height: 500 },
   projectList: { width: 300, height: 400 },
@@ -569,7 +495,6 @@ export const PANEL_MINIMUM_SIZES: Record<PanelType, Size> = {
   terminal: { width: 320, height: 200 },
   browser: { width: 400, height: 300 },
   editor: { width: 300, height: 250 },
-  aiChat: { width: 300, height: 300 },
   git: { width: 350, height: 300 },
   fileExplorer: { width: 180, height: 200 },
   projectList: { width: 180, height: 200 },

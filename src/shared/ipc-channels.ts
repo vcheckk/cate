@@ -62,7 +62,6 @@ export const SESSION_LOAD = 'session:load'
 export const SESSION_CLEAR = 'session:clear'
 
 // App
-export const APP_PLAY_SOUND = 'app:playSound'
 export const APP_GET_PATH = 'app:getPath'
 
 // Menu actions (main -> renderer)
@@ -82,16 +81,9 @@ export const LAYOUT_LIST = 'layout:list'
 export const LAYOUT_LOAD = 'layout:load'
 export const LAYOUT_DELETE = 'layout:delete'
 
-// Window (Task 23: Multi-Window Support)
-export const WINDOW_DETACH_PANEL = 'window:detachPanel'
-export const WINDOW_REATTACH_PANEL = 'window:reattachPanel'
-export const WINDOW_DETACHED_CLOSED = 'window:detachedClosed'  // main -> renderer
-
 // MCP Server Management
 export const MCP_SPAWN = 'mcp:spawn'
 export const MCP_STOP = 'mcp:stop'
 export const MCP_TEST = 'mcp:test'
 export const MCP_STATUS_UPDATE = 'mcp:statusUpdate'  // main -> renderer
 
-// Plugin / Extension System (Task 25)
-export const PLUGIN_LIST = 'plugin:list'

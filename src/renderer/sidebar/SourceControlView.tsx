@@ -6,7 +6,6 @@ import {
   ChevronRight,
   Plus,
   Minus,
-  Undo2,
 } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 
@@ -105,9 +104,8 @@ const FileEntry: React.FC<{
   statusChar: string
   onStage?: () => void
   onUnstage?: () => void
-  onDiscard?: () => void
   onClick?: () => void
-}> = ({ file, statusChar, onStage, onUnstage, onDiscard, onClick }) => {
+}> = ({ file, statusChar, onStage, onUnstage, onClick }) => {
   const dir = dirName(file.path)
   return (
     <div
@@ -122,15 +120,6 @@ const FileEntry: React.FC<{
         {dir && <span className="text-white/30 ml-1">{dir}</span>}
       </span>
       <div className="hidden group-hover:flex items-center gap-0.5 flex-shrink-0">
-        {onDiscard && (
-          <button
-            className="p-0.5 rounded hover:bg-white/10 text-white/40 hover:text-white/70"
-            onClick={(e) => { e.stopPropagation(); onDiscard() }}
-            title="Discard Changes"
-          >
-            <Undo2 size={13} />
-          </button>
-        )}
         {onStage && (
           <button
             className="p-0.5 rounded hover:bg-white/10 text-white/40 hover:text-white/70"
@@ -401,7 +390,6 @@ export const SourceControlView: React.FC<SourceControlViewProps> = ({ rootPath }
               file={f}
               statusChar={f.working_dir}
               onStage={() => stageFile(f.path)}
-              onDiscard={() => {/* TODO: implement discard */}}
               onClick={() => openDiff(f.path)}
             />
           ))}

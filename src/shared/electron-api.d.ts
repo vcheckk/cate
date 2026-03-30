@@ -169,9 +169,6 @@ export interface ElectronAPI {
   // App
   // ---------------------------------------------------------------------------
 
-  /** Play a named system sound. */
-  appPlaySound(name: string): Promise<void>
-
   /** Get a well-known application path (e.g. 'userData', 'home'). */
   appGetPath(name: string): Promise<string>
 
@@ -210,26 +207,6 @@ export interface ElectronAPI {
 
   /** Delete a named layout. */
   layoutDelete(name: string): Promise<void>
-
-  // ---------------------------------------------------------------------------
-  // Window (Task 23: Multi-Window Support)
-  // ---------------------------------------------------------------------------
-
-  /** Open panel content in a detached Electron BrowserWindow. Returns the new window ID. */
-  detachPanel(options: { panelId: string; panelType: string; title: string; width: number; height: number }): Promise<number>
-
-  /** Close a detached window by its window ID (reattach flow). */
-  reattachPanel(windowId: number): Promise<void>
-
-  /** Subscribe to detached window closed events (main -> renderer). Returns unsubscribe function. */
-  onDetachedWindowClosed(callback: (data: { windowId: number; panelId: string }) => void): () => void
-
-  // ---------------------------------------------------------------------------
-  // Plugins (Task 25: Plugin/Extension System scaffold)
-  // ---------------------------------------------------------------------------
-
-  /** List installed plugins. Scaffold: always returns empty array. */
-  pluginList(): Promise<Array<{ name: string; version: string; description: string }>>
 
   /** Capture the current page as a data URL for panel previews. */
   capturePage(): Promise<string | null>

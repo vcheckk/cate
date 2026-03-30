@@ -4,11 +4,10 @@
 // =============================================================================
 
 import React, { useCallback, useState } from 'react'
-import { Terminal, Globe, FileText, Bot, GitBranch, Maximize2, Minimize2, Lock, Unlock, X } from 'lucide-react'
+import { Terminal, Globe, FileText, GitBranch, Maximize2, Minimize2, Lock, Unlock, X } from 'lucide-react'
 import type { PanelType } from '../../shared/types'
 import { panelColor } from '../panels/types'
 import { useCanvasStore } from '../stores/canvasStore'
-import { useDockStore } from '../stores/dockStore'
 import ContextMenu from '../ui/ContextMenu'
 
 // -----------------------------------------------------------------------------
@@ -31,7 +30,6 @@ interface TitleBarProps {
   onSplitHorizontal?: () => void
   onSplitVertical?: () => void
   onAddTab?: () => void
-  onDetach?: () => void
 }
 
 // -----------------------------------------------------------------------------
@@ -47,8 +45,6 @@ function PanelIcon({ type, color }: { type: PanelType; color: string }) {
       return <Globe {...props} />
     case 'editor':
       return <FileText {...props} />
-    case 'aiChat':
-      return <Bot {...props} />
     case 'git':
       return <GitBranch {...props} />
   }
@@ -74,7 +70,6 @@ const CanvasNodeTitleBar: React.FC<TitleBarProps> = ({
   onSplitHorizontal,
   onSplitVertical,
   onAddTab,
-  onDetach,
 }) => {
   const iconColor = panelColor(panelType)
 
@@ -161,43 +156,6 @@ const CanvasNodeTitleBar: React.FC<TitleBarProps> = ({
       : []),
     ...(onAddTab
       ? [{ label: 'Add Tab', onClick: onAddTab }]
-      : []),
-    { label: '', separator: true, onClick: () => {} },
-    {
-      label: 'Dock to Left',
-      onClick: () => {
-        const node = useCanvasStore.getState().nodes[nodeId]
-        if (node) {
-          useDockStore.getState().dockPanel(node.panelId, 'left')
-          useCanvasStore.getState().removeNode(nodeId)
-        }
-      },
-    },
-    {
-      label: 'Dock to Right',
-      onClick: () => {
-        const node = useCanvasStore.getState().nodes[nodeId]
-        if (node) {
-          useDockStore.getState().dockPanel(node.panelId, 'right')
-          useCanvasStore.getState().removeNode(nodeId)
-        }
-      },
-    },
-    {
-      label: 'Dock to Bottom',
-      onClick: () => {
-        const node = useCanvasStore.getState().nodes[nodeId]
-        if (node) {
-          useDockStore.getState().dockPanel(node.panelId, 'bottom')
-          useCanvasStore.getState().removeNode(nodeId)
-        }
-      },
-    },
-    ...(onDetach
-      ? [{ label: '', separator: true, onClick: () => {} }]
-      : []),
-    ...(onDetach
-      ? [{ label: 'Detach to Window', onClick: onDetach }]
       : []),
     { label: '', separator: true, onClick: () => {} },
     {

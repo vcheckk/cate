@@ -21,7 +21,6 @@ import {
   LAYOUT_LIST,
   LAYOUT_LOAD,
   LAYOUT_DELETE,
-  PLUGIN_LIST,
 } from '../shared/ipc-channels'
 import { DEFAULT_SETTINGS } from '../shared/types'
 import type { AppSettings, SessionSnapshot } from '../shared/types'
@@ -142,9 +141,4 @@ export function registerHandlers(): void {
     store.set('layouts', layouts)
   })
 
-  // Plugin list (Task 25: Plugin/Extension System scaffold)
-  // Future: read pluginDirectory from settings and return plugin manifests
-  ipcMain.handle(PLUGIN_LIST, async (): Promise<Array<{ name: string; version: string; description: string }>> => {
-    return []
-  })
 }

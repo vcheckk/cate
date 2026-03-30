@@ -1,6 +1,6 @@
 {
   "name": "cate",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "productName": "Cate",
   "description": "An infinite zoomable canvas IDE",
   "license": "MIT",
@@ -30,7 +30,6 @@
     "package:linux": "npm run icons && electron-vite build && electron-builder --linux"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-webgl": "^0.18.0",

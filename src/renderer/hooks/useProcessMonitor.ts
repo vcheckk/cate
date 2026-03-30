@@ -6,7 +6,6 @@
 import { useEffect, useRef } from 'react'
 import { useStatusStore } from '../stores/statusStore'
 import { useAppStore } from '../stores/appStore'
-import { playCommandFinished, playClaudeNeedsInput } from '../lib/notifications'
 import type { TerminalActivity, ClaudeCodeState, NodeActivityState } from '../../shared/types'
 
 // -----------------------------------------------------------------------------
@@ -87,7 +86,6 @@ export function useProcessMonitor(workspaceId: string): void {
         // Detect transition to waitingForInput
         if (claudeState === 'waitingForInput' && prev.claudeState !== 'waitingForInput') {
           currentNodeActivityType = 'claudeWaitingForInput'
-          playClaudeNeedsInput()
         }
 
         // Detect command finished: terminal went from running to idle
@@ -105,7 +103,6 @@ export function useProcessMonitor(workspaceId: string): void {
         // Detect Claude finished
         if (claudeState === 'finished' && prev.claudeState !== 'finished') {
           currentNodeActivityType = 'commandFinished'
-          playCommandFinished()
         }
 
         // If Claude transitions from waitingForInput to running, clear the node activity

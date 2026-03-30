@@ -9,17 +9,7 @@ import { CanvasSettings } from './CanvasSettings'
 import { TerminalSettings } from './TerminalSettings'
 import { BrowserSettings } from './BrowserSettings'
 import { SidebarSettings } from './SidebarSettings'
-import { NotificationSettings } from './NotificationSettings'
 import { ShortcutSettings } from './ShortcutSettings'
-
-function PluginsSettings() {
-  return (
-    <div className="text-white/40 text-sm">
-      <p>Plugin system coming soon.</p>
-      <p className="text-xs mt-1">Plugins will be loaded from a configurable directory.</p>
-    </div>
-  )
-}
 
 const SECTIONS = [
   { title: 'General', component: GeneralSettings },
@@ -28,9 +18,7 @@ const SECTIONS = [
   { title: 'Terminal', component: TerminalSettings },
   { title: 'Browser', component: BrowserSettings },
   { title: 'Sidebar', component: SidebarSettings },
-  { title: 'Notifications', component: NotificationSettings },
   { title: 'Shortcuts', component: ShortcutSettings },
-  { title: 'Plugins', component: PluginsSettings },
 ] as const
 
 interface SettingsWindowProps {

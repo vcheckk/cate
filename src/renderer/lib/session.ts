@@ -5,16 +5,10 @@
 
 import { useAppStore } from '../stores/appStore'
 import { useCanvasStore } from '../stores/canvasStore'
-import { useDockStore } from '../stores/dockStore'
 import type {
   SessionSnapshot,
   NodeSnapshot,
   MultiWorkspaceSession,
-  WorkspaceState,
-  DockZonePosition,
-  DockZoneSnapshot,
-  DockSnapshotPanel,
-  PanelState,
   PanelType,
 } from '../../shared/types'
 import { terminalRegistry } from './terminalRegistry'
@@ -28,46 +22,6 @@ export const terminalRestoreData = new Map<string, { cwd?: string; replayFromId?
 
 // Deferred snapshots for inactive workspaces — restored on first switch
 export const deferredSnapshots = new Map<string, SessionSnapshot>()
-
-// -----------------------------------------------------------------------------
-// Dock layout serialization helper
-// -----------------------------------------------------------------------------
-
-function serializeDockLayout(
-  workspace: WorkspaceState,
-): Record<DockZonePosition, DockZoneSnapshot> | undefined {
-  const dockState = useDockStore.getState()
-  const result: Record<string, DockZoneSnapshot> = {}
-
-  for (const position of ['left', 'right', 'bottom'] as DockZonePosition[]) {
-    const zone = dockState.zones[position]
-    const panels: DockSnapshotPanel[] = zone.panelIds
-      .map((panelId) => {
-        const panel = workspace.panels[panelId]
-        if (!panel) return null
-        return {
-          panelId: panel.id,
-          panelType: panel.type,
-          title: panel.title,
-          filePath: panel.filePath ?? null,
-          url: panel.url ?? null,
-        }
-      })
-      .filter(Boolean) as DockSnapshotPanel[]
-
-    result[position] = {
-      panelIds: zone.panelIds,
-      activePanelIndex: zone.activePanelIndex,
-      size: zone.size,
-      collapsed: zone.collapsed,
-      panels,
-    }
-  }
-
-  return Object.values(result).some((z) => z.panelIds.length > 0)
-    ? (result as Record<DockZonePosition, DockZoneSnapshot>)
-    : undefined
-}
 
 // -----------------------------------------------------------------------------
 // Save
@@ -148,7 +102,6 @@ export async function saveSession(): Promise<void> {
       viewportOffset: isSelected ? canvasState.viewportOffset : workspace.viewportOffset,
       nodes: nodeSnapshots,
       regions: Object.keys(regions).length > 0 ? { ...regions } : undefined,
-      dockLayout: serializeDockLayout(workspace),
     })
   }
 
@@ -294,40 +247,6 @@ export async function restoreSession(snapshot: SessionSnapshot): Promise<void> {
     }
   }
 
-  // Restore dock layout
-  if (snapshot.dockLayout) {
-    const dockStore = useDockStore.getState()
-    dockStore.reset()
-
-    for (const position of ['left', 'right', 'bottom'] as DockZonePosition[]) {
-      const zoneSnap = snapshot.dockLayout[position]
-      if (!zoneSnap || zoneSnap.panels.length === 0) continue
-
-      for (const dockedPanel of zoneSnap.panels) {
-        // Register the panel in the workspace (not as a canvas node)
-        const panel: PanelState = {
-          id: dockedPanel.panelId,
-          type: dockedPanel.panelType as PanelType,
-          title: dockedPanel.title,
-          isDirty: false,
-          filePath: dockedPanel.filePath ?? undefined,
-          url: dockedPanel.url ?? undefined,
-        }
-        appStore.addPanel(wsId, panel)
-
-        // Dock it into the appropriate zone
-        useDockStore.getState().dockPanel(dockedPanel.panelId, position)
-      }
-
-      // Restore zone settings
-      useDockStore.getState().resizeZone(position, zoneSnap.size)
-      useDockStore.getState().setActiveTab(position, zoneSnap.activePanelIndex)
-      if (zoneSnap.collapsed) {
-        useDockStore.getState().setZoneCollapsed(position, true)
-      }
-    }
-  }
-
   console.debug(`[session] workspace ${wsId} restored in ${(performance.now() - t0).toFixed(1)}ms`)
 }
 
@@ -439,15 +358,9 @@ export function setupAutoSave(): () => void {
     autoSaveTimer = setTimeout(() => saveSession(), 5000)
   })
 
-  const unsubDock = useDockStore.subscribe(() => {
-    if (autoSaveTimer) clearTimeout(autoSaveTimer)
-    autoSaveTimer = setTimeout(() => saveSession(), 5000)
-  })
-
   return () => {
     unsubCanvas()
     unsubApp()
-    unsubDock()
     if (autoSaveTimer) clearTimeout(autoSaveTimer)
     autoSaveSetUp = false
   }

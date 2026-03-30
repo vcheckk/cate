@@ -51,26 +51,18 @@ jobs:
 
       - name: Package (macOS)
         if: matrix.platform == 'mac'
-        run: npx electron-builder --mac --publish never
+        run: npx electron-builder --mac --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package (Linux)
         if: matrix.platform == 'linux'
-        run: npx electron-builder --linux --publish never
+        run: npx electron-builder --linux --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package (Windows)
         if: matrix.platform == 'win'
-        run: npx electron-builder --win --publish never
-
-      - name: Upload release artifacts
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          files: |
-            release/*.dmg
-            release/*.zip
-            release/*.exe
-            release/*.AppImage
-            release/*.deb
-            release/*.tar.gz
-            release/*.blockmap
-            release/latest*.yml
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

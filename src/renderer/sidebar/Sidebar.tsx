@@ -5,8 +5,9 @@ import { SourceControlView } from './SourceControlView'
 import { AIConfigSidebarView } from './AIConfigSidebarView'
 import { useAppStore } from '../stores/appStore'
 import { useUIStore } from '../stores/uiStore'
+import { useStatusStore } from '../stores/statusStore'
 import type { SidebarView } from '../stores/uiStore'
-import { FolderOpen, GitBranch } from 'lucide-react'
+import { Bell, ChevronLeft, ChevronRight, FolderOpen, GitBranch, Plus } from 'lucide-react'
 
 // Custom agent setup icon — bottle/flask shape, matches lucide stroke style
 const AgentSetupIcon = React.forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement> & { size?: number | string }>(
@@ -35,6 +36,8 @@ interface SidebarProps {
   isVisible: boolean
 }
 
+const LEFT_COLLAPSED_WIDTH = 36
+
 export const Sidebar: React.FC<SidebarProps> = ({ isVisible }) => {
   const [width, setWidth] = useState(LEFT_DEFAULT_WIDTH)
   const [isResizing, setIsResizing] = useState(false)
@@ -42,6 +45,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ isVisible }) => {
   const startWidthRef = useRef(0)
 
   const toggleSidebar = useUIStore((s) => s.toggleSidebar)
+  const workspaces = useAppStore((s) => s.workspaces)
+  const addWorkspace = useAppStore((s) => s.addWorkspace)
+  const selectWorkspace = useAppStore((s) => s.selectWorkspace)
+  const needsInputCount = useStatusStore((s) => {
+    let count = 0
+    for (const ws of workspaces) {
+      if (s.isAnimating(ws.id)) count++
+    }
+    return count
+  })
+
+  const handleNewWorkspace = useCallback(() => {
+    const wsId = addWorkspace()
+    selectWorkspace(wsId)
+  }, [addWorkspace, selectWorkspace])
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -68,23 +86,62 @@ export const Sidebar: React.FC<SidebarProps> = ({ isVisible }) => {
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
   }, [isResizing])
 
-  if (!isVisible) return null
-
   return (
     <div
-      className="flex-shrink-0 relative flex flex-col h-full bg-canvas-bg border-r border-white/10 select-none overflow-hidden"
-      style={{ width: `${width}px` }}
+      className="flex-shrink-0 relative flex flex-col h-full bg-canvas-bg border-r border-white/10 select-none overflow-hidden transition-[width] duration-200 ease-in-out"
+      style={{ width: isVisible ? `${width}px` : `${LEFT_COLLAPSED_WIDTH}px` }}
     >
       {/* macOS titlebar drag region */}
       <div className="h-7 flex-shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
 
-      <ProjectList />
+      {/* When collapsed: show icons vertically. When expanded: ProjectList renders them. */}
+      {!isVisible && (
+        <div className="flex flex-col items-center gap-1 py-2 flex-shrink-0">
+          <button
+            className="relative text-white/40 hover:text-white/70 transition-colors p-1"
+            title="Notifications"
+          >
+            <Bell size={16} />
+            {needsInputCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 bg-blue-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
+                {needsInputCount}
+              </span>
+            )}
+          </button>
+          <button
+            className="text-white/40 hover:text-white/70 transition-colors p-1"
+            onClick={handleNewWorkspace}
+            title="New Workspace"
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+      )}
 
-      {/* Resize handle */}
-      <div
-        className={`absolute top-0 right-0 w-[6px] h-full cursor-col-resize z-10 ${isResizing ? 'bg-blue-500/30' : ''}`}
-        onMouseDown={handleMouseDown}
-      />
+      {/* Workspace list with icon toolbar — hidden when collapsed */}
+      <div className={`min-h-0 overflow-hidden transition-opacity duration-200 ${isVisible ? 'flex-1 opacity-100' : 'h-0 opacity-0'}`}>
+        <ProjectList />
+      </div>
+
+      <div className="flex-1" />
+
+      <div className="flex-shrink-0 border-t border-white/10 p-1.5">
+        <button
+          className="flex items-center justify-center w-full h-6 rounded text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors"
+          onClick={toggleSidebar}
+          title={isVisible ? 'Collapse sidebar (⌘\\)' : 'Expand sidebar (⌘\\)'}
+        >
+          {isVisible ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+        </button>
+      </div>
+
+      {/* Resize handle (only when expanded) */}
+      {isVisible && (
+        <div
+          className={`absolute top-0 right-0 w-[6px] h-full cursor-col-resize z-10 ${isResizing ? 'bg-blue-500/30' : ''}`}
+          onMouseDown={handleMouseDown}
+        />
+      )}
     </div>
   )
 }

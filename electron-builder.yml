@@ -2,6 +2,10 @@ appId: com.cate.app
 productName: Cate
 directories:
   output: release
+publish:
+  provider: github
+  owner: 0-AI-UG
+  repo: cate
 mac:
   icon: build/icon.icns
   category: public.app-category.developer-tools

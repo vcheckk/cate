@@ -4,6 +4,7 @@
 
 import { BrowserWindow, Menu, app } from 'electron'
 import { MENU_OPEN_SETTINGS } from '../shared/ipc-channels'
+import { checkForUpdatesManually } from './auto-updater'
 
 export function buildApplicationMenu(): void {
   const template: Electron.MenuItemConstructorOptions[] = [
@@ -12,6 +13,12 @@ export function buildApplicationMenu(): void {
       label: app.name,
       submenu: [
         { role: 'about' },
+        {
+          label: 'Check for Updates...',
+          click: (): void => {
+            checkForUpdatesManually()
+          },
+        },
         { type: 'separator' },
         {
           label: 'Preferences...',

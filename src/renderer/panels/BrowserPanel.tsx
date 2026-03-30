@@ -34,26 +34,46 @@ interface WebviewElement extends HTMLElement {
 // Helpers
 // -----------------------------------------------------------------------------
 
-/** Check if input looks like a URL (contains "." and no spaces, or starts with http/https). */
+/** Check if input looks like a URL rather than a search query. */
 function isUrl(input: string): boolean {
   const trimmed = input.trim()
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     return true
   }
-  // Contains a dot and no spaces — likely a URL
-  if (trimmed.includes('.') && !trimmed.includes(' ')) {
+  // Has spaces — definitely a search query
+  if (trimmed.includes(' ')) {
+    return false
+  }
+  // Contains a dot — likely a domain (e.g. "example.com", "192.168.1.1")
+  if (trimmed.includes('.')) {
+    return true
+  }
+  // "localhost" or "localhost:port"
+  if (/^localhost(:\d+)?(\/.*)?$/.test(trimmed)) {
+    return true
+  }
+  // Explicit port on any host (e.g. "myhost:3000")
+  if (/^[\w-]+(:\d+)(\/.*)?$/.test(trimmed)) {
     return true
   }
   return false
 }
 
-/** Normalize a URL string, prepending https:// if no protocol present. */
+/** Normalize a URL string, prepending a protocol if none present.
+ *  Uses http:// for localhost/127.0.0.1/[::1], https:// for everything else.
+ *  Also downgrades https:// to http:// for local addresses. */
 function normalizeUrl(input: string): string {
   const trimmed = input.trim()
+  if (trimmed.startsWith('about:')) return trimmed
+  // Downgrade https to http for local addresses
+  if (/^https:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(trimmed)) {
+    return trimmed.replace('https://', 'http://')
+  }
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     return trimmed
   }
-  return `https://${trimmed}`
+  const isLocal = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(trimmed)
+  return `${isLocal ? 'http' : 'https'}://${trimmed}`
 }
 
 // -----------------------------------------------------------------------------
@@ -71,7 +91,8 @@ export default function BrowserPanel({
   const browserSearchEngine = useSettingsStore((s) => s.browserSearchEngine)
   const updatePanelTitle = useAppStore((s) => s.updatePanelTitle)
 
-  const initialUrl = url || browserHomepage || 'https://www.google.com'
+  const rawInitialUrl = url || browserHomepage || 'https://www.google.com'
+  const initialUrl = rawInitialUrl.startsWith('about:') ? rawInitialUrl : normalizeUrl(rawInitialUrl)
 
   const webviewRef = useRef<WebviewElement | null>(null)
   const [currentUrl, setCurrentUrl] = useState(initialUrl)
@@ -252,7 +273,7 @@ export default function BrowserPanel({
         ref={webviewRef as any}
         src={initialUrl}
         className={`w-full flex-1 ${loadError ? 'hidden' : ''}`}
-        allowpopups="true"
+        allowpopups={true as any}
       />
     </div>
   )

@@ -8,6 +8,7 @@ import { registerHandlers as registerShellHandlers } from './ipc/shell'
 import { registerHandlers as registerGitMonitorHandlers } from './ipc/git-monitor'
 import { registerHandlers as registerStoreHandlers } from './store'
 import { registerHandlers as registerMCPHandlers } from './ipc/mcp'
+import { registerHandlers as registerNotificationHandlers } from './ipc/notifications'
 import { buildApplicationMenu } from './menu'
 
 let mainWindow: BrowserWindow | null = null
@@ -51,6 +52,7 @@ function createWindow(): void {
   registerGitMonitorHandlers(mainWindow)
   registerStoreHandlers()
   registerMCPHandlers(mainWindow)
+  registerNotificationHandlers(mainWindow)
 }
 
 // Shell: Reveal in Finder
@@ -95,9 +97,10 @@ ipcMain.handle('dialog:saveFile', async (_event, options: { defaultPath?: string
 })
 
 // Capture page screenshot for panel previews
-ipcMain.handle('capture-page', async () => {
-  if (!mainWindow || mainWindow.isDestroyed()) return null
-  const image = await mainWindow.webContents.capturePage()
+ipcMain.handle('capture-page', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (!win || win.isDestroyed()) return null
+  const image = await win.webContents.capturePage()
   return image.toDataURL()
 })
 

@@ -10,6 +10,7 @@ import { TerminalSettings } from './TerminalSettings'
 import { BrowserSettings } from './BrowserSettings'
 import { SidebarSettings } from './SidebarSettings'
 import { ShortcutSettings } from './ShortcutSettings'
+import { NotificationSettings } from './NotificationSettings'
 
 const SECTIONS = [
   { title: 'General', component: GeneralSettings },
@@ -18,6 +19,7 @@ const SECTIONS = [
   { title: 'Terminal', component: TerminalSettings },
   { title: 'Browser', component: BrowserSettings },
   { title: 'Sidebar', component: SidebarSettings },
+  { title: 'Notifications', component: NotificationSettings },
   { title: 'Shortcuts', component: ShortcutSettings },
 ] as const
 

@@ -8,7 +8,7 @@ import { create } from 'zustand'
 import type {
   CanvasNodeId,
   NodeActivityState,
-  ClaudeCodeState,
+  AgentState,
   TerminalActivity,
   GitInfo,
 } from '../../shared/types'
@@ -19,7 +19,8 @@ import type {
 
 interface WorkspaceStatusState {
   terminalActivity: Record<string, TerminalActivity>
-  claudeCodeState: Record<string, ClaudeCodeState>
+  agentState: Record<string, AgentState>
+  agentName: Record<string, string | null>
   nodeActivity: Record<CanvasNodeId, NodeActivityState>
   terminalTitles: Record<string, string>
   listeningPorts: Record<string, number[]>      // terminalId → ports
@@ -42,7 +43,7 @@ interface StatusStoreState {
 interface StatusStoreActions {
   // Mutations
   setTerminalActivity: (workspaceId: string, terminalId: string, activity: TerminalActivity) => void
-  setClaudeState: (workspaceId: string, terminalId: string, state: ClaudeCodeState) => void
+  setAgentState: (workspaceId: string, terminalId: string, state: AgentState, name: string | null) => void
   setNodeActivity: (nodeId: CanvasNodeId, state: NodeActivityState) => void
   clearNodeActivity: (nodeId: CanvasNodeId) => void
   setTerminalTitle: (terminalId: string, title: string) => void
@@ -78,7 +79,8 @@ const AUTO_CLEAR_DELAY_MS = 5000
 function emptyWorkspaceStatus(): WorkspaceStatusState {
   return {
     terminalActivity: {},
-    claudeCodeState: {},
+    agentState: {},
+    agentName: {},
     nodeActivity: {},
     terminalTitles: {},
     listeningPorts: {},
@@ -86,8 +88,8 @@ function emptyWorkspaceStatus(): WorkspaceStatusState {
   }
 }
 
-/** Find the "most important" Claude state across all terminals in a workspace. */
-function aggregateClaudeState(states: Record<string, ClaudeCodeState>): ClaudeCodeState {
+/** Find the "most important" agent state across all terminals in a workspace. */
+function aggregateAgentState(states: Record<string, AgentState>): AgentState {
   const vals = Object.values(states)
   // Priority: waitingForInput > running > finished > notRunning
   if (vals.includes('waitingForInput')) return 'waitingForInput'
@@ -146,7 +148,7 @@ export const useStatusStore = create<StatusStore>((set, get) => ({
     })
   },
 
-  setClaudeState(workspaceId, terminalId, claudeState) {
+  setAgentState(workspaceId, terminalId, agentState, agentName) {
     get().ensureWorkspace(workspaceId)
     set((state) => {
       const ws = state.workspaces[workspaceId] ?? emptyWorkspaceStatus()
@@ -155,7 +157,8 @@ export const useStatusStore = create<StatusStore>((set, get) => ({
           ...state.workspaces,
           [workspaceId]: {
             ...ws,
-            claudeCodeState: { ...ws.claudeCodeState, [terminalId]: claudeState },
+            agentState: { ...ws.agentState, [terminalId]: agentState },
+            agentName: { ...ws.agentName, [terminalId]: agentName },
           },
         },
       }
@@ -241,7 +244,7 @@ export const useStatusStore = create<StatusStore>((set, get) => ({
     const ws = get().workspaces[workspaceId]
     if (!ws) return 'Idle'
 
-    const claude = aggregateClaudeState(ws.claudeCodeState)
+    const claude = aggregateAgentState(ws.agentState)
     if (claude !== 'notRunning') {
       switch (claude) {
         case 'running':
@@ -268,7 +271,7 @@ export const useStatusStore = create<StatusStore>((set, get) => ({
     const ws = get().workspaces[workspaceId]
     if (!ws) return ''
 
-    const claude = aggregateClaudeState(ws.claudeCodeState)
+    const claude = aggregateAgentState(ws.agentState)
     switch (claude) {
       case 'running':
         return '\u26A1' // ⚡
@@ -293,7 +296,7 @@ export const useStatusStore = create<StatusStore>((set, get) => ({
     const ws = get().workspaces[workspaceId]
     if (!ws) return '#8E8E93' // systemGray
 
-    const claude = aggregateClaudeState(ws.claudeCodeState)
+    const claude = aggregateAgentState(ws.agentState)
     switch (claude) {
       case 'running':
         return '#007AFF' // systemBlue
@@ -319,7 +322,7 @@ export const useStatusStore = create<StatusStore>((set, get) => ({
   isAnimating(workspaceId) {
     const ws = get().workspaces[workspaceId]
     if (!ws) return false
-    return aggregateClaudeState(ws.claudeCodeState) === 'waitingForInput'
+    return aggregateAgentState(ws.agentState) === 'waitingForInput'
   },
 
   registerTerminal(terminalId, workspaceId) {
@@ -339,14 +342,16 @@ export const useStatusStore = create<StatusStore>((set, get) => ({
         const { [terminalId]: _p, ...remainingPorts } = ws.listeningPorts
         const { [terminalId]: _c, ...remainingCwd } = ws.terminalCwd
         const { [terminalId]: _a, ...remainingActivity } = ws.terminalActivity
-        const { [terminalId]: _s, ...remainingClaude } = ws.claudeCodeState
+        const { [terminalId]: _s, ...remainingAgent } = ws.agentState
+        const { [terminalId]: _an, ...remainingAgentName } = ws.agentName
         const { [terminalId]: _t, ...remainingTitles } = ws.terminalTitles
         updatedWorkspaces[workspaceId] = {
           ...ws,
           listeningPorts: remainingPorts,
           terminalCwd: remainingCwd,
           terminalActivity: remainingActivity,
-          claudeCodeState: remainingClaude,
+          agentState: remainingAgent,
+          agentName: remainingAgentName,
           terminalTitles: remainingTitles,
         }
       }

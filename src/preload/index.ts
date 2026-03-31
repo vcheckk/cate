@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
   TERMINAL_CREATE,
   TERMINAL_WRITE,
@@ -69,6 +69,8 @@ import {
   MCP_STOP,
   MCP_TEST,
   MCP_STATUS_UPDATE,
+  NOTIFY_OS,
+  NOTIFY_ACTION,
 } from '../shared/ipc-channels'
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -277,15 +279,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   onShellActivityUpdate(
-    callback: (terminalId: string, activity: unknown, claudeState: unknown) => void,
+    callback: (terminalId: string, activity: unknown, agentState: unknown, agentName: unknown) => void,
   ): () => void {
     const listener = (
       _event: Electron.IpcRendererEvent,
       terminalId: string,
       activity: unknown,
-      claudeState: unknown,
+      agentState: unknown,
+      agentName: unknown,
     ): void => {
-      callback(terminalId, activity, claudeState)
+      callback(terminalId, activity, agentState, agentName)
     }
     ipcRenderer.on(SHELL_ACTIVITY_UPDATE, listener)
     return () => {
@@ -480,6 +483,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
     ipcRenderer.on(MCP_STATUS_UPDATE, listener)
     return () => { ipcRenderer.removeListener(MCP_STATUS_UPDATE, listener) }
+  },
+
+  // ---------------------------------------------------------------------------
+  // Notifications
+  // ---------------------------------------------------------------------------
+
+  notifyOS(payload: { title: string; body: string; action?: unknown }): Promise<void> {
+    return ipcRenderer.invoke(NOTIFY_OS, payload)
+  },
+
+  onNotifyAction(callback: (action: unknown) => void): () => void {
+    const listener = (_event: Electron.IpcRendererEvent, action: unknown): void => {
+      callback(action)
+    }
+    ipcRenderer.on(NOTIFY_ACTION, listener)
+    return () => { ipcRenderer.removeListener(NOTIFY_ACTION, listener) }
+  },
+
+  // ---------------------------------------------------------------------------
+  // File drag-and-drop helpers
+  // ---------------------------------------------------------------------------
+
+  /** Get the absolute file path for a File object from an OS drag-and-drop. */
+  getPathForFile(file: File): string {
+    return webUtils.getPathForFile(file)
   },
 
   // ---------------------------------------------------------------------------

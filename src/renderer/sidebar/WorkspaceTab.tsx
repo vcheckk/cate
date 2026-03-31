@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import { useShallow } from 'zustand/shallow'
-import { Bell, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import type { WorkspaceState } from '../../shared/types'
 import { useStatusStore } from '../stores/statusStore'
 import { useAppStore, WORKSPACE_COLORS } from '../stores/appStore'
@@ -53,8 +53,6 @@ export const WorkspaceTab: React.FC<WorkspaceTabProps> = ({
 }) => {
   ensurePulseStyles()
 
-  const isAnimating = useStatusStore((s) => s.isAnimating(workspace.id))
-
   // Single store read for all workspace status data (avoids multiple O(n) loops)
   const wsStatus = useStatusStore(useShallow((s) => {
     const ws = s.workspaces[workspace.id]
@@ -62,7 +60,7 @@ export const WorkspaceTab: React.FC<WorkspaceTabProps> = ({
     return {
       listeningPorts: ws.listeningPorts,
       terminalCwd: ws.terminalCwd,
-      claudeCodeState: ws.claudeCodeState,
+      agentState: ws.agentState,
     }
   }))
 
@@ -83,15 +81,6 @@ export const WorkspaceTab: React.FC<WorkspaceTabProps> = ({
     const cwds = Object.values(wsStatus.terminalCwd)
     return cwds.length > 0 ? cwds[0] : null
   }, [wsStatus?.terminalCwd])
-
-  const claudeState = useMemo(() => {
-    if (!wsStatus) return 'notRunning'
-    const vals = Object.values(wsStatus.claudeCodeState)
-    if (vals.includes('waitingForInput')) return 'waitingForInput'
-    if (vals.includes('running')) return 'running'
-    if (vals.includes('finished')) return 'finished'
-    return 'notRunning'
-  }, [wsStatus?.claudeCodeState])
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [isRenaming, setIsRenaming] = useState(false)
@@ -203,9 +192,6 @@ export const WorkspaceTab: React.FC<WorkspaceTabProps> = ({
 
   const panelCount = Object.keys(workspace.panels).length
 
-  const showClaudeStatus = claudeState === 'running' || claudeState === 'waitingForInput'
-  const showNeedsInput = claudeState === 'waitingForInput'
-
   // Show custom name if user renamed the workspace, otherwise show the path
   const defaultName = workspace.rootPath ? workspace.rootPath.split('/').pop() || 'Workspace' : 'Workspace'
   const hasCustomName = workspace.name && workspace.name !== defaultName && workspace.name !== 'Workspace'
@@ -279,24 +265,7 @@ export const WorkspaceTab: React.FC<WorkspaceTabProps> = ({
         </button>
       </div>
 
-      {/* Row 2: Claude status text */}
-      {showClaudeStatus && (
-        <div className="mt-1 text-xs opacity-80">
-          {claudeState === 'waitingForInput'
-            ? 'Claude is waiting for your input'
-            : 'Claude is running'}
-        </div>
-      )}
-
-      {/* Row 3: Needs input badge */}
-      {showNeedsInput && (
-        <div className="mt-1 flex items-center gap-1 text-xs">
-          <Bell size={12} className="text-orange-400" />
-          <span className="text-orange-400 font-medium">Needs input</span>
-        </div>
-      )}
-
-      {/* Row 4: Git branch + CWD */}
+      {/* Row 2: Git branch + CWD */}
       {hasInfoRow && (
         <div className="mt-1 text-[11px] opacity-60 truncate">
           {gitDisplay && <span>{gitDisplay}</span>}

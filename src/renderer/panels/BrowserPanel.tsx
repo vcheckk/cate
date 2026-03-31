@@ -8,6 +8,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Globe, ArrowLeft, ArrowRight, RotateCw } from 'lucide-react'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useAppStore } from '../stores/appStore'
+import { useCanvasStore } from '../stores/canvasStore'
 import { SEARCH_ENGINE_URLS } from '../../shared/types'
 import type { BrowserPanelProps } from './types'
 
@@ -90,6 +91,9 @@ export default function BrowserPanel({
   const browserHomepage = useSettingsStore((s) => s.browserHomepage)
   const browserSearchEngine = useSettingsStore((s) => s.browserSearchEngine)
   const updatePanelTitle = useAppStore((s) => s.updatePanelTitle)
+  const updatePanelUrl = useAppStore((s) => s.updatePanelUrl)
+
+  const isFocused = useCanvasStore((s) => s.focusedNodeId === nodeId)
 
   const rawInitialUrl = url || browserHomepage || 'https://www.google.com'
   const initialUrl = rawInitialUrl.startsWith('about:') ? rawInitialUrl : normalizeUrl(rawInitialUrl)
@@ -146,6 +150,19 @@ export default function BrowserPanel({
   }, [inputUrl, navigateTo])
 
   // -------------------------------------------------------------------------
+  // Focus the webview when this panel becomes the focused node
+  // -------------------------------------------------------------------------
+
+  useEffect(() => {
+    if (!isFocused) return
+    const webview = webviewRef.current
+    if (!webview) return
+    requestAnimationFrame(() => {
+      webview.focus()
+    })
+  }, [isFocused])
+
+  // -------------------------------------------------------------------------
   // Webview event listeners
   // -------------------------------------------------------------------------
 
@@ -161,6 +178,7 @@ export default function BrowserPanel({
       setCanGoForward(webview.canGoForward())
       setIsLoading(false)
       setLoadError(null)
+      updatePanelUrl(workspaceId, panelId, url)
     }
 
     const onDidNavigateInPage = (event: any) => {
@@ -169,6 +187,7 @@ export default function BrowserPanel({
       setInputUrl(url)
       setCanGoBack(webview.canGoBack())
       setCanGoForward(webview.canGoForward())
+      updatePanelUrl(workspaceId, panelId, url)
     }
 
     const onPageTitleUpdated = (event: any) => {
@@ -210,7 +229,7 @@ export default function BrowserPanel({
       webview.removeEventListener('did-start-loading', onDidStartLoading)
       webview.removeEventListener('did-stop-loading', onDidStopLoading)
     }
-  }, [panelId, workspaceId, updatePanelTitle])
+  }, [panelId, workspaceId, updatePanelTitle, updatePanelUrl])
 
   // -------------------------------------------------------------------------
   // Render

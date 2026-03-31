@@ -63,7 +63,7 @@ function activityOutline(activity: NodeActivityState | undefined): string {
   switch (activity.type) {
     case 'commandFinished':
       return '2px solid rgba(77, 217, 100, 0.7)'
-    case 'claudeWaitingForInput':
+    case 'agentWaitingForInput':
       return '2px solid rgba(255, 149, 0, 0.8)'
     default:
       return 'none'
@@ -319,7 +319,7 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
   const containerStyle = useMemo<React.CSSProperties>(() => {
     if (!node) return { display: 'none' }
 
-    const isPulsing = activityState?.type === 'claudeWaitingForInput'
+    const isPulsing = activityState?.type === 'agentWaitingForInput'
     const isEntering = node.animationState === 'entering'
     const isExiting = node.animationState === 'exiting'
 
@@ -399,6 +399,18 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
       {/* Content area */}
       <div
         data-panel-content
+        onDragLeave={(e) => {
+          // Restore overlay pointer events when drag leaves the content area
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+            const overlay = e.currentTarget.querySelector<HTMLElement>('[data-unfocused-overlay]')
+            if (overlay && !isFocused) overlay.style.pointerEvents = 'auto'
+          }
+        }}
+        onDrop={() => {
+          // Restore overlay pointer events after a drop
+          const el = nodeRef.current?.querySelector<HTMLElement>('[data-unfocused-overlay]')
+          if (el && !isFocused) el.style.pointerEvents = 'auto'
+        }}
         style={{
           position: 'relative',
           height: `calc(100% - ${TITLE_BAR_HEIGHT}px${hasStack ? ' - 24px' : ''})`,
@@ -409,6 +421,7 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
              panel-specific cursors (text cursor, etc.) don't show until focused.
              Click-and-drag on this overlay moves the window without activating it. */}
         <div
+          data-unfocused-overlay
           onMouseDown={(e) => {
             if (isFocused || e.button !== 0) return
             e.stopPropagation()
@@ -424,6 +437,18 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
             }
             useCanvasStore.getState().selectNodes([nodeId])
             focusNode(nodeId)
+          }}
+          onDragEnter={(e) => {
+            // When an external file drag enters the overlay, disable pointer
+            // events so subsequent dragover/drop events reach the panel content
+            // beneath (e.g. terminal drop zone). Restored on dragleave/drop on
+            // the parent node wrapper.
+            if (
+              e.dataTransfer.types.includes('Files') ||
+              e.dataTransfer.types.includes('application/cate-file')
+            ) {
+              ;(e.currentTarget as HTMLElement).style.pointerEvents = 'none'
+            }
           }}
           style={{
             position: 'absolute',

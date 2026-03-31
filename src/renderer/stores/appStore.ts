@@ -85,6 +85,7 @@ interface AppStoreActions {
   // Panel management
   closePanel: (workspaceId: string, panelId: string) => void
   updatePanelTitle: (workspaceId: string, panelId: string, title: string) => void
+  updatePanelUrl: (workspaceId: string, panelId: string, url: string) => void
   setPanelDirty: (workspaceId: string, panelId: string, dirty: boolean) => void
   addPanel: (workspaceId: string, panel: PanelState) => void
 
@@ -424,6 +425,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
         return {
           ...ws,
           panels: { ...ws.panels, [panelId]: { ...panel, title } },
+        }
+      }),
+    }))
+  },
+
+  updatePanelUrl(workspaceId, panelId, url) {
+    set((state) => ({
+      workspaces: state.workspaces.map((ws) => {
+        if (ws.id !== workspaceId) return ws
+        const panel = ws.panels[panelId]
+        if (!panel) return ws
+        return {
+          ...ws,
+          panels: { ...ws.panels, [panelId]: { ...panel, url } },
         }
       }),
     }))

@@ -168,7 +168,7 @@ const CanvasNodeTitleBar: React.FC<TitleBarProps> = ({
   return (
     <>
       <div
-        className="group flex h-7 items-center bg-[#28282E] px-2 select-none"
+        className="group flex h-7 items-center bg-[#28282E] px-2 select-none cursor-grab hover:bg-[#32323A] transition-colors"
         onMouseDown={handleMouseDown}
         onContextMenu={handleContextMenu}
       >

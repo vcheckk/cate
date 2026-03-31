@@ -124,9 +124,16 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
     }
   }, [])
 
-  const handleFileDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+  const handleFileDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
     const filePath = e.dataTransfer.getData('application/cate-file')
     if (!filePath) return
+    // Don't create editors for directories — they can only be dropped on terminals
+    try {
+      const stat = await window.electronAPI.fsStat(filePath)
+      if (stat?.isDirectory) return
+    } catch {
+      // If we can't stat, fall through and try to open it anyway
+    }
     e.preventDefault()
     const rect = canvasRef.current?.getBoundingClientRect()
     if (!rect) return

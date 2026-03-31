@@ -2,7 +2,7 @@
 // Type declaration for window.electronAPI exposed via contextBridge
 // =============================================================================
 
-import type { AppSettings, ClaudeCodeState, FileTreeNode, GitInfo, SessionSnapshot, TerminalActivity } from './types'
+import type { AppSettings, AgentState, FileTreeNode, GitInfo, NotificationAction, SessionSnapshot, TerminalActivity } from './types'
 
 export interface ElectronAPI {
   // ---------------------------------------------------------------------------
@@ -172,7 +172,7 @@ export interface ElectronAPI {
 
   /** Subscribe to shell activity updates (main -> renderer). */
   onShellActivityUpdate(
-    callback: (terminalId: string, activity: TerminalActivity, claudeState: ClaudeCodeState) => void,
+    callback: (terminalId: string, activity: TerminalActivity, agentState: AgentState, agentName: string | null) => void,
   ): () => void
 
   /** Subscribe to port scan updates (main -> renderer). */
@@ -281,6 +281,23 @@ export interface ElectronAPI {
   mcpStop(name: string): Promise<void>
   mcpTest(command: string, args: string[], env: Record<string, string>): Promise<{ success: boolean; error?: string }>
   onMcpStatusUpdate(callback: (update: { name: string; status: string; error?: string }) => void): () => void
+
+  // ---------------------------------------------------------------------------
+  // Notifications
+  // ---------------------------------------------------------------------------
+
+  /** Send an OS notification via the main process. */
+  notifyOS(payload: { title: string; body: string; action?: NotificationAction }): Promise<void>
+
+  /** Subscribe to notification action events (OS notification clicked, main -> renderer). */
+  onNotifyAction(callback: (action: NotificationAction) => void): () => void
+
+  // ---------------------------------------------------------------------------
+  // File drag-and-drop helpers
+  // ---------------------------------------------------------------------------
+
+  /** Get the absolute file path for a File object from an OS drag-and-drop. */
+  getPathForFile(file: File): string
 
   // ---------------------------------------------------------------------------
   // Menu actions (main -> renderer)

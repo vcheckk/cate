@@ -5,9 +5,9 @@ import { SourceControlView } from './SourceControlView'
 import { AIConfigSidebarView } from './AIConfigSidebarView'
 import { useAppStore, useWorkspaceList } from '../stores/appStore'
 import { useUIStore } from '../stores/uiStore'
-import { useStatusStore } from '../stores/statusStore'
+import { NotificationBell } from '../ui/NotificationPopover'
 import type { SidebarView } from '../stores/uiStore'
-import { Bell, ChevronLeft, ChevronRight, FolderOpen, GitBranch, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, FolderOpen, GitBranch, Plus } from 'lucide-react'
 
 // Custom agent setup icon — bottle/flask shape, matches lucide stroke style
 const AgentSetupIcon = React.forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement> & { size?: number | string }>(
@@ -48,14 +48,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ isVisible }) => {
   const workspaces = useWorkspaceList()
   const addWorkspace = useAppStore((s) => s.addWorkspace)
   const selectWorkspace = useAppStore((s) => s.selectWorkspace)
-  const needsInputCount = useStatusStore((s) => {
-    let count = 0
-    for (const ws of workspaces) {
-      if (s.isAnimating(ws.id)) count++
-    }
-    return count
-  })
-
   const handleNewWorkspace = useCallback(() => {
     const wsId = addWorkspace()
     selectWorkspace(wsId)
@@ -103,17 +95,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isVisible }) => {
       {/* When collapsed: show workspace dots + action icons */}
       {!isVisible && (
         <div className="flex flex-col items-center gap-1 py-2 flex-shrink-0">
-          <button
-            className="relative text-white/40 hover:text-white/70 transition-colors p-1"
-            title="Notifications"
-          >
-            <Bell size={16} />
-            {needsInputCount > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 bg-blue-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
-                {needsInputCount}
-              </span>
-            )}
-          </button>
+          <NotificationBell />
           <button
             className="text-white/40 hover:text-white/70 transition-colors p-1"
             onClick={handleNewWorkspace}

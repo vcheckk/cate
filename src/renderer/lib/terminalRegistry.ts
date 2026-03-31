@@ -92,6 +92,9 @@ async function getOrCreate(panelId: string, opts: CreateOpts): Promise<RegistryE
     cursorBlink: true,
     allowProposedApi: true,
     scrollback: 10000,
+    macOptionIsMeta: true,
+    altClickMovesCursor: true,
+    drawBoldTextInBrightColors: false,
   })
 
   // 2. FitAddon — load before opening so fit() is available immediately
@@ -123,9 +126,27 @@ async function getOrCreate(panelId: string, opts: CreateOpts): Promise<RegistryE
     webglAddon = new WebglAddon()
     webglAddon.onContextLoss(() => {
       webglAddon!.dispose()
-      // Update entry in registry so getEntry reflects null
       const entry = registry.get(panelId)
-      if (entry) entry.webglAddon = null
+      if (entry) {
+        entry.webglAddon = null
+        // Attempt to recover WebGL after a short delay
+        setTimeout(() => {
+          const e = registry.get(panelId)
+          if (!e || e.webglAddon) return
+          try {
+            const recovered = new WebglAddon()
+            recovered.onContextLoss(() => {
+              recovered.dispose()
+              const ent = registry.get(panelId)
+              if (ent) ent.webglAddon = null
+            })
+            e.terminal.loadAddon(recovered)
+            e.webglAddon = recovered
+          } catch {
+            // Canvas renderer fallback — no further retry
+          }
+        }, 500)
+      }
     })
     terminal.loadAddon(webglAddon)
   } catch {
@@ -292,8 +313,14 @@ function attach(panelId: string, container: HTMLDivElement): void {
   requestAnimationFrame(() => {
     if (!registry.has(panelId)) return
     try {
+      const viewportEl = terminal.element?.querySelector('.xterm-viewport')
+      const savedScrollTop = viewportEl?.scrollTop ?? 0
       fitAddon.fit()
       terminal.refresh(0, terminal.rows - 1)
+      // Restore scroll position — fit/refresh can reset the viewport scrollTop
+      if (viewportEl && viewportEl.scrollTop !== savedScrollTop) {
+        viewportEl.scrollTop = savedScrollTop
+      }
     } catch { /* ignore */ }
   })
 }
@@ -371,6 +398,14 @@ function has(panelId: string): boolean {
   return registry.has(panelId)
 }
 
+/** Reverse lookup: find panelId by ptyId. */
+function panelIdForPty(ptyId: string): string | null {
+  for (const [panelId, entry] of registry) {
+    if (entry.ptyId === ptyId) return panelId
+  }
+  return null
+}
+
 // ---------------------------------------------------------------------------
 // Search API
 // ---------------------------------------------------------------------------
@@ -403,6 +438,7 @@ export const terminalRegistry = {
   dispose,
   getEntry,
   has,
+  panelIdForPty,
   findNext,
   findPrevious,
   clearSearch,

@@ -6,14 +6,17 @@
 import { useEffect, useRef } from 'react'
 import { useStatusStore } from '../stores/statusStore'
 import { useAppStore } from '../stores/appStore'
-import type { TerminalActivity, ClaudeCodeState, NodeActivityState } from '../../shared/types'
+import { useSettingsStore } from '../stores/settingsStore'
+import { useNotificationStore } from '../stores/notificationStore'
+import type { TerminalActivity, AgentState, NodeActivityState } from '../../shared/types'
 
 // -----------------------------------------------------------------------------
 // Previous state tracking for transition detection
 // -----------------------------------------------------------------------------
 
 interface PreviousTerminalState {
-  claudeState: ClaudeCodeState
+  agentState: AgentState
+  agentName: string | null
   nodeActivityType: NodeActivityState['type'] | null
 }
 
@@ -42,23 +45,25 @@ export function useProcessMonitor(workspaceId: string): void {
     const pendingUpdates = new Map<string, ReturnType<typeof setTimeout>>()
 
     const unsubscribe = api.onShellActivityUpdate(
-      (terminalId: string, activityRaw: unknown, claudeStateRaw: unknown) => {
+      (terminalId: string, activityRaw: unknown, agentStateRaw: unknown, agentNameRaw: unknown) => {
         const terminalActivity = activityRaw as TerminalActivity
-        const claudeState = (claudeStateRaw as ClaudeCodeState) ?? 'notRunning'
+        const agentState = (agentStateRaw as AgentState) ?? 'notRunning'
+        const agentName = (agentNameRaw as string | null) ?? null
 
         // Retrieve previous state for this terminal
         const prevMap = previousStatesRef.current
         const prev = prevMap.get(terminalId) || {
-          claudeState: 'notRunning' as ClaudeCodeState,
+          agentState: 'notRunning' as AgentState,
+          agentName: null,
           nodeActivityType: null,
         }
 
         // --- Update status store (debounced for activity, immediate for state transitions) ---
-        const isTransition = claudeState !== prev.claudeState
+        const isTransition = agentState !== prev.agentState
         if (isTransition) {
           // State transitions update immediately (for notifications)
           store().setTerminalActivity(workspaceId, terminalId, terminalActivity)
-          store().setClaudeState(workspaceId, terminalId, claudeState)
+          store().setAgentState(workspaceId, terminalId, agentState, agentName)
           // Clear any pending debounced update
           const pending = pendingUpdates.get(terminalId)
           if (pending) {
@@ -72,27 +77,26 @@ export function useProcessMonitor(workspaceId: string): void {
           pendingUpdates.set(terminalId, setTimeout(() => {
             pendingUpdates.delete(terminalId)
             store().setTerminalActivity(workspaceId, terminalId, terminalActivity)
-            store().setClaudeState(workspaceId, terminalId, claudeState)
+            store().setAgentState(workspaceId, terminalId, agentState, agentName)
           }, 200))
         }
 
         // --- Derive node activity and trigger notifications ---
-        // The main process does not send nodeId or nodeActivity directly.
-        // We derive nodeActivity from claudeState transitions, matching the
-        // Swift ProcessMonitor logic.
-
         let currentNodeActivityType: NodeActivityState['type'] | null = null
 
+        // Use the current or previous agent name for display
+        const displayName = agentName ?? prev.agentName ?? 'Agent'
+
         // Detect transition to waitingForInput
-        if (claudeState === 'waitingForInput' && prev.claudeState !== 'waitingForInput') {
-          currentNodeActivityType = 'claudeWaitingForInput'
+        if (agentState === 'waitingForInput' && prev.agentState !== 'waitingForInput') {
+          currentNodeActivityType = 'agentWaitingForInput'
         }
 
         // Detect command finished: terminal went from running to idle
         if (
           terminalActivity.type === 'idle' &&
-          prev.claudeState === 'notRunning' &&
-          claudeState === 'notRunning'
+          prev.agentState === 'notRunning' &&
+          agentState === 'notRunning'
         ) {
           // Only trigger if we previously had activity (avoid initial idle state)
           if (prev.nodeActivityType === null && prevMap.has(terminalId)) {
@@ -100,19 +104,46 @@ export function useProcessMonitor(workspaceId: string): void {
           }
         }
 
-        // Detect Claude finished
-        if (claudeState === 'finished' && prev.claudeState !== 'finished') {
+        // Detect agent finished
+        if (agentState === 'finished' && prev.agentState !== 'finished') {
           currentNodeActivityType = 'commandFinished'
         }
 
-        // If Claude transitions from waitingForInput to running, clear the node activity
-        if (claudeState === 'running' && prev.claudeState === 'waitingForInput') {
+        // If agent transitions from waitingForInput to running, clear the node activity
+        if (agentState === 'running' && prev.agentState === 'waitingForInput') {
           currentNodeActivityType = 'normal'
+        }
+
+        // --- Notification triggers ---
+        if (currentNodeActivityType === 'agentWaitingForInput') {
+          const settings = useSettingsStore.getState()
+          if (settings.notificationsEnabled && settings.notifyOnTerminalHalt) {
+            useNotificationStore.getState().notify({
+              title: `${displayName} needs input`,
+              body: `${displayName} is waiting for your response.`,
+              type: 'warning',
+              action: { type: 'focusTerminal', workspaceId, terminalId },
+            })
+          }
+        }
+
+        if (currentNodeActivityType === 'commandFinished') {
+          const settings = useSettingsStore.getState()
+          if (settings.notificationsEnabled && settings.notifyOnTerminalHalt) {
+            const finishedName = prev.agentName ?? displayName
+            useNotificationStore.getState().notify({
+              title: 'Task complete',
+              body: `${finishedName} has finished running.`,
+              type: 'success',
+              action: { type: 'focusTerminal', workspaceId, terminalId },
+            })
+          }
         }
 
         // Update previous state
         prevMap.set(terminalId, {
-          claudeState,
+          agentState,
+          agentName,
           nodeActivityType: currentNodeActivityType ?? prev.nodeActivityType,
         })
       },

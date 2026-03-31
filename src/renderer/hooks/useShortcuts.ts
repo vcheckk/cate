@@ -50,11 +50,24 @@ export function useShortcuts(): void {
         shortcutStore().cancelHintHold()
       }
 
+      // --- Detect whether a terminal panel is focused ---
+      // When a terminal has focus, most keyboard events must pass through to
+      // xterm.js. Only app-level shortcuts (Cmd+<key>, Ctrl+Tab, etc.) should
+      // be intercepted; everything else belongs to the terminal.
+      const { selectedWorkspaceId } = appStore()
+      const focusedId = canvasStore().focusedNodeId
+      const focusedNode = focusedId ? canvasStore().nodes[focusedId] : null
+      const focusedPanel = focusedNode
+        ? appStore().workspaces.find(w => w.id === selectedWorkspaceId)?.panels[focusedNode.panelId]
+        : null
+      const terminalHasFocus = focusedPanel?.type === 'terminal'
+
       // --- Selection & region shortcuts (hardcoded) ---
 
       // Cmd+A — select all
       if (e.metaKey && !e.shiftKey && e.key === 'a') {
-        // Don't select-all if a text input/editor is focused
+        // Don't select-all if a text input/editor/terminal is focused
+        if (terminalHasFocus) return
         const active = document.activeElement
         const isEditable = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active?.getAttribute('contenteditable') === 'true'
         if (!isEditable) {
@@ -67,6 +80,7 @@ export function useShortcuts(): void {
 
       // Cmd+G — group selected nodes into region
       if (e.metaKey && !e.shiftKey && e.key === 'g') {
+        if (terminalHasFocus) return
         e.preventDefault()
         e.stopPropagation()
         canvasStore().groupSelectedIntoRegion()
@@ -75,6 +89,7 @@ export function useShortcuts(): void {
 
       // Cmd+Shift+G — dissolve selected regions
       if (e.metaKey && e.shiftKey && e.key === 'G') {
+        if (terminalHasFocus) return
         e.preventDefault()
         e.stopPropagation()
         const state = canvasStore()
@@ -86,6 +101,7 @@ export function useShortcuts(): void {
 
       // Escape — clear selection (when no overlay is open)
       if (e.key === 'Escape') {
+        if (terminalHasFocus) return
         const ui = useUIStore.getState()
         if (!ui.showCommandPalette && !ui.showNodeSwitcher && !ui.showPanelSwitcher && !ui.showGlobalSearch) {
           canvasStore().clearSelection()
@@ -96,6 +112,7 @@ export function useShortcuts(): void {
 
       // Delete/Backspace — delete selection
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (terminalHasFocus) return
         const state = canvasStore()
         if (state.selectedNodeIds.size > 0 || state.selectedRegionIds.size > 0) {
           // Don't delete if a text input is focused
@@ -121,8 +138,6 @@ export function useShortcuts(): void {
 
       e.preventDefault()
       e.stopPropagation()
-
-      const { selectedWorkspaceId } = appStore()
 
       switch (action) {
         case 'newTerminal':

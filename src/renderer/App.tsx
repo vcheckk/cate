@@ -28,6 +28,7 @@ import { CommandPalette } from './ui/CommandPalette'
 import { GlobalSearch } from './ui/GlobalSearch'
 import { ShortcutHintOverlay } from './ui/ShortcutHintOverlay'
 import { SettingsWindow } from './settings/SettingsWindow'
+import { ToastContainer } from './ui/ToastContainer'
 import WelcomePage from './ui/WelcomePage'
 import { AISetupDialog } from './dialogs/AISetupDialog'
 import { loadSession, restoreSession, restoreMultiWorkspaceSession, setupAutoSave, saveSession } from './lib/session'
@@ -360,6 +361,8 @@ export default function App() {
       {showAISetupDialog && (
         <AISetupDialog workspaceId={selectedWorkspaceId} />
       )}
+
+      <ToastContainer />
     </div>
   )
 }

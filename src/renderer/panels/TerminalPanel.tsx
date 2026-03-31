@@ -175,9 +175,15 @@ export default function TerminalPanel({
     if (!isFocused) return
     const entry = terminalRegistry.getEntry(panelId)
     if (!entry) return
-    // Small delay to ensure the overlay is removed and xterm can receive focus
     requestAnimationFrame(() => {
+      // Save viewport scroll position before focus — the browser may auto-scroll
+      // the .xterm-viewport div to 0 when the hidden textarea receives focus.
+      const viewportEl = entry.terminal.element?.querySelector('.xterm-viewport')
+      const savedScrollTop = viewportEl?.scrollTop ?? 0
       entry.terminal.focus()
+      if (viewportEl && viewportEl.scrollTop !== savedScrollTop) {
+        viewportEl.scrollTop = savedScrollTop
+      }
     })
   }, [isFocused, panelId])
 
@@ -229,6 +235,71 @@ export default function TerminalPanel({
   }, [zoomLevel])
 
   // -------------------------------------------------------------------------
+  // Drag-and-drop: accept files from OS or internal file explorer
+  // -------------------------------------------------------------------------
+
+  const [isDragOver, setIsDragOver] = useState(false)
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    // Accept drops from internal file explorer or external file drops
+    if (
+      e.dataTransfer.types.includes('application/cate-file') ||
+      e.dataTransfer.types.includes('Files')
+    ) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'copy'
+      setIsDragOver(true)
+    }
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    // Only clear when leaving the container itself, not child elements
+    if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragOver(false)
+    }
+  }, [])
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      e.stopPropagation()
+      setIsDragOver(false)
+
+      const paths: string[] = []
+
+      // Internal file explorer drag
+      const catePath = e.dataTransfer.getData('application/cate-file')
+      if (catePath) {
+        paths.push(catePath)
+      }
+
+      // External OS file drop — use Electron's webUtils to get real paths
+      if (e.dataTransfer.files.length > 0) {
+        for (const file of Array.from(e.dataTransfer.files)) {
+          const filePath = window.electronAPI?.getPathForFile(file)
+          if (filePath) paths.push(filePath)
+        }
+      }
+
+      if (paths.length === 0) return
+
+      // Shell-escape each path and write to terminal as space-separated text
+      const escaped = paths.map((p) => {
+        // If path contains no special shell characters, use it as-is
+        if (/^[a-zA-Z0-9_./:@~=-]+$/.test(p)) return p
+        // Otherwise, single-quote it (escaping any existing single quotes)
+        return "'" + p.replace(/'/g, "'\\''") + "'"
+      })
+
+      const entry = terminalRegistry.getEntry(panelId)
+      if (entry) {
+        entry.terminal.paste(escaped.join(' '))
+      }
+    },
+    [panelId],
+  )
+
+  // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
 
@@ -275,11 +346,18 @@ export default function TerminalPanel({
       )}
       <div
         ref={containerRef}
-        className="flex-1"
+        className="flex-1 relative"
         style={{ padding: 0, overflow: 'hidden' }}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => e.preventDefault()}
-      />
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {isDragOver && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-blue-500/10 border-2 border-dashed border-blue-500/40 rounded pointer-events-none">
+            <span className="text-blue-400 text-sm font-medium">Drop to paste path</span>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -334,9 +334,9 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutAction, StoredShortcut> = {
 export type NodeActivityState =
   | { type: 'normal' }
   | { type: 'commandFinished'; exitCode: number }
-  | { type: 'claudeWaitingForInput' }
+  | { type: 'agentWaitingForInput' }
 
-export type ClaudeCodeState = 'notRunning' | 'running' | 'waitingForInput' | 'finished'
+export type AgentState = 'notRunning' | 'running' | 'waitingForInput' | 'finished'
 
 export type TerminalActivity =
   | { type: 'idle' }
@@ -411,6 +411,15 @@ export interface LayoutSnapshot {
 }
 
 // -----------------------------------------------------------------------------
+// Notification types
+// -----------------------------------------------------------------------------
+
+export type NotificationMode = 'off' | 'os' | 'inApp' | 'both'
+
+export type NotificationAction =
+  | { type: 'focusTerminal'; workspaceId: string; terminalId: string }
+
+// -----------------------------------------------------------------------------
 // App settings — mirrors AppSettings.swift with all defaults
 // -----------------------------------------------------------------------------
 
@@ -445,6 +454,12 @@ export interface AppSettings {
   sidebarTintOpacity: number
   showFileExplorerOnLaunch: boolean
 
+  // Notifications
+  notificationsEnabled: boolean
+  notificationMode: NotificationMode
+  notifyOnTerminalHalt: boolean
+  notifyOnlyWhenUnfocused: boolean
+
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -477,6 +492,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // Sidebar
   sidebarTintOpacity: 1.0,
   showFileExplorerOnLaunch: false,
+
+  // Notifications
+  notificationsEnabled: true,
+  notificationMode: 'both',
+  notifyOnTerminalHalt: true,
+  notifyOnlyWhenUnfocused: true,
 
 }
 

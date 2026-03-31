@@ -134,6 +134,20 @@ export function useCanvasInteraction(
       // let the panel handle it — but only if the panel can scroll in that direction.
       // Horizontal swipes should pan the canvas when the panel has no horizontal scroll.
       const target = e.target as HTMLElement
+
+      // Webview elements (browser panels) handle their own scrolling via
+      // Electron's cross-process input routing. The passive:false capture
+      // listener interferes with that routing, so bail out immediately for
+      // any wheel event targeting a webview inside a focused panel.
+      if (target.tagName === 'WEBVIEW') {
+        const nodeEl = target.closest('[data-node-id]')
+        const nodeId = nodeEl?.getAttribute('data-node-id')
+        const { focusedNodeId } = useCanvasStore.getState()
+        if (nodeId && nodeId === focusedNodeId) {
+          return
+        }
+      }
+
       const panelContent = target.closest?.('[data-panel-content]')
       if (panelContent) {
         const nodeEl = panelContent.closest('[data-node-id]')

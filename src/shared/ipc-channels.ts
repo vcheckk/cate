@@ -99,3 +99,7 @@ export const MCP_STOP = 'mcp:stop'
 export const MCP_TEST = 'mcp:test'
 export const MCP_STATUS_UPDATE = 'mcp:statusUpdate'  // main -> renderer
 
+// Notifications
+export const NOTIFY_OS = 'notify:os'
+export const NOTIFY_ACTION = 'notify:action' // main -> renderer (OS notification clicked)
+

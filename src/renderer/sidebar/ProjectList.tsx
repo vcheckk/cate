@@ -1,8 +1,8 @@
 import React, { useState, useCallback } from 'react'
-import { Bell, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { useAppStore, useWorkspaceList } from '../stores/appStore'
-import { useStatusStore } from '../stores/statusStore'
 import { useUIStore } from '../stores/uiStore'
+import { NotificationBell } from '../ui/NotificationPopover'
 import { WorkspaceTab } from './WorkspaceTab'
 
 export const ProjectList: React.FC = () => {
@@ -19,30 +19,11 @@ export const ProjectList: React.FC = () => {
 
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
 
-  const needsInputCount = useStatusStore((s) => {
-    let count = 0
-    for (const ws of workspaces) {
-      if (s.isAnimating(ws.id)) count++
-    }
-    return count
-  })
-
   return (
     <div className="flex flex-col h-full">
       {/* Icon toolbar */}
       <div className="flex items-center gap-2 px-3 py-2 flex-shrink-0">
-        <button
-          className="relative text-white/40 hover:text-white/70 transition-colors p-1"
-          title="Notifications"
-        >
-          <Bell size={16} />
-          {needsInputCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 bg-blue-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
-              {needsInputCount}
-            </span>
-          )}
-        </button>
-
+        <NotificationBell />
         <button
           className="text-white/40 hover:text-white/70 transition-colors p-1"
           onClick={handleNewWorkspace}

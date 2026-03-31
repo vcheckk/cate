@@ -1,6 +1,6 @@
 // =============================================================================
 // Shell / Process Monitor IPC handlers
-// Ported from ProcessMonitor.swift — walks process tree to detect Claude Code
+// Walks process tree to detect agent CLIs (Claude, Aider, Codex, Gemini, etc.)
 // =============================================================================
 
 import { execFile } from 'child_process'
@@ -14,7 +14,7 @@ import {
   SHELL_CWD_UPDATE,
 } from '../../shared/ipc-channels'
 import { terminalPids } from './terminal'
-import type { TerminalActivity, ClaudeCodeState } from '../../shared/types'
+import type { TerminalActivity, AgentState } from '../../shared/types'
 
 interface TerminalRegistration {
   shellPid: number
@@ -23,14 +23,16 @@ interface TerminalRegistration {
 }
 
 interface PreviousState {
-  claudeState: ClaudeCodeState
-  previouslyHadClaude: boolean
+  agentState: AgentState
+  previousAgentName: string | null
+  previouslyHadAgent: boolean
 }
 
 interface ScanResult {
   terminalActivity: TerminalActivity
-  claudeState: ClaudeCodeState
-  previouslyHadClaude: boolean
+  agentState: AgentState
+  agentName: string | null
+  previouslyHadAgent: boolean
 }
 
 // Registered terminals for process monitoring
@@ -52,7 +54,7 @@ let pollBusy = false
 function getChildPids(pid: number): Promise<number[]> {
   if (!pid || pid <= 0) return Promise.resolve([])
   return new Promise((resolve) => {
-    execFile('ps', ['-o', 'pid=', `-ppid=${pid}`], {
+    execFile('pgrep', ['-P', `${pid}`], {
       encoding: 'utf-8',
       timeout: 2000,
     }, (err, stdout) => {
@@ -100,12 +102,42 @@ function getProcessName(pid: number): Promise<string | null> {
 }
 
 /**
- * Check if a process name looks like Claude Code.
- * Matches: 'claude', 'claude-code', or starts with 'claude'.
+ * Agent CLI definitions. Each entry maps process name patterns to a display name.
+ * The matcher checks if the process basename (lowercased) matches any pattern.
  */
-function isClaudeProcess(name: string): boolean {
+const AGENT_DEFINITIONS: { displayName: string; match: (name: string) => boolean }[] = [
+  {
+    displayName: 'Claude Code',
+    match: (n) => n === 'claude' || n === 'claude-code' || n.startsWith('claude'),
+  },
+  {
+    displayName: 'Codex',
+    match: (n) => n === 'codex',
+  },
+  {
+    displayName: 'Gemini CLI',
+    match: (n) => n === 'gemini',
+  },
+  {
+    displayName: 'Cursor',
+    match: (n) => n === 'cursor' || n === 'cursor-agent',
+  },
+  {
+    displayName: 'OpenCode',
+    match: (n) => n === 'opencode',
+  },
+]
+
+/**
+ * Check if a process name matches a known agent CLI.
+ * Returns the display name if matched, or null if not an agent.
+ */
+function matchAgentProcess(name: string): string | null {
   const lower = name.toLowerCase()
-  return lower === 'claude' || lower === 'claude-code' || lower.startsWith('claude')
+  for (const agent of AGENT_DEFINITIONS) {
+    if (agent.match(lower)) return agent.displayName
+  }
+  return null
 }
 
 /**
@@ -209,15 +241,16 @@ function getProcessCwd(pid: number): Promise<string | null> {
  */
 async function scanTerminal(terminalId: string, info: TerminalRegistration): Promise<ScanResult> {
   const prev = previousStates.get(terminalId) || {
-    claudeState: 'notRunning' as ClaudeCodeState,
-    previouslyHadClaude: false,
+    agentState: 'notRunning' as AgentState,
+    previousAgentName: null,
+    previouslyHadAgent: false,
   }
 
   // Get children of the shell PID
   const childrenToScan = await getChildPids(info.shellPid)
 
-  let foundClaude = false
-  let claudeHasActiveChildren = false
+  let foundAgentName: string | null = null
+  let agentHasActiveChildren = false
   let firstChildName: string | null = null
 
   for (const childPid of childrenToScan) {
@@ -226,11 +259,14 @@ async function scanTerminal(terminalId: string, info: TerminalRegistration): Pro
       if (firstChildName === null && !isShellProcess(name)) {
         firstChildName = name
       }
-      if (isClaudeProcess(name)) {
-        foundClaude = true
-        const claudeChildren = await getChildPids(childPid)
-        if (claudeChildren.length > 0) {
-          claudeHasActiveChildren = true
+      if (!foundAgentName) {
+        const agentMatch = matchAgentProcess(name)
+        if (agentMatch) {
+          foundAgentName = agentMatch
+          const agentChildren = await getChildPids(childPid)
+          if (agentChildren.length > 0) {
+            agentHasActiveChildren = true
+          }
         }
       }
     }
@@ -242,23 +278,24 @@ async function scanTerminal(terminalId: string, info: TerminalRegistration): Pro
       ? { type: 'running', processName: firstChildName }
       : { type: 'idle' }
 
-  // Determine Claude state
-  let claudeState: ClaudeCodeState = prev.claudeState
-  let previouslyHadClaude = prev.previouslyHadClaude
+  // Determine agent state
+  let agentState: AgentState = prev.agentState
+  let agentName: string | null = foundAgentName ?? prev.previousAgentName
+  let previouslyHadAgent = prev.previouslyHadAgent
 
-  if (foundClaude) {
-    if (claudeHasActiveChildren) {
-      claudeState = 'running'
+  if (foundAgentName) {
+    if (agentHasActiveChildren) {
+      agentState = 'running'
     } else {
-      claudeState = 'waitingForInput'
+      agentState = 'waitingForInput'
     }
-    previouslyHadClaude = true
-  } else if (previouslyHadClaude) {
-    claudeState = 'finished'
-    previouslyHadClaude = false
+    previouslyHadAgent = true
+  } else if (previouslyHadAgent) {
+    agentState = 'finished'
+    previouslyHadAgent = false
   }
 
-  return { terminalActivity, claudeState, previouslyHadClaude }
+  return { terminalActivity, agentState, agentName, previouslyHadAgent }
 }
 
 /**
@@ -280,6 +317,7 @@ function startPolling(mainWindow: BrowserWindow): void {
     try {
       // Scan all terminals concurrently
       const entries = Array.from(registeredTerminals.entries())
+      if (entries.length === 0) return
       const scanResults = await Promise.all(
         entries.map(async ([terminalId, info]) => {
           const result = await scanTerminal(terminalId, info)
@@ -290,18 +328,20 @@ function startPolling(mainWindow: BrowserWindow): void {
       for (const { terminalId, result } of scanResults) {
         // Update previous state
         previousStates.set(terminalId, {
-          claudeState: result.claudeState,
-          previouslyHadClaude: result.previouslyHadClaude,
+          agentState: result.agentState,
+          previousAgentName: result.agentName,
+          previouslyHadAgent: result.previouslyHadAgent,
         })
 
         // Auto-clear finished state after detecting it
-        if (result.claudeState === 'finished') {
+        if (result.agentState === 'finished') {
           setTimeout(() => {
             const current = previousStates.get(terminalId)
-            if (current && current.claudeState === 'finished') {
+            if (current && current.agentState === 'finished') {
               previousStates.set(terminalId, {
-                claudeState: 'notRunning',
-                previouslyHadClaude: false,
+                agentState: 'notRunning',
+                previousAgentName: null,
+                previouslyHadAgent: false,
               })
             }
           }, 5000)
@@ -313,7 +353,8 @@ function startPolling(mainWindow: BrowserWindow): void {
             SHELL_ACTIVITY_UPDATE,
             terminalId,
             result.terminalActivity,
-            result.claudeState,
+            result.agentState,
+            result.agentName,
           )
         }
       }
@@ -375,8 +416,9 @@ export function registerHandlers(mainWindow: BrowserWindow): void {
       })
 
       previousStates.set(terminalId, {
-        claudeState: 'notRunning',
-        previouslyHadClaude: false,
+        agentState: 'notRunning',
+        previousAgentName: null,
+        previouslyHadAgent: false,
       })
 
       // Start polling on first registration

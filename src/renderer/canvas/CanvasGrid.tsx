@@ -4,7 +4,7 @@
 // =============================================================================
 
 import React, { useMemo } from 'react'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreContext } from '../stores/CanvasStoreContext'
 import { useSettingsStore } from '../stores/settingsStore'
 
 interface CanvasGridProps {
@@ -18,8 +18,8 @@ const CanvasGrid: React.FC<CanvasGridProps> = ({
 }) => {
   const gridStyle = useSettingsStore((s) => s.gridStyle)
   const gridSpacing = useSettingsStore((s) => s.gridSpacing)
-  const zoom = useCanvasStore((s) => s.zoomLevel)
-  const offset = useCanvasStore((s) => s.viewportOffset)
+  const zoom = useCanvasStoreContext((s) => s.zoomLevel)
+  const offset = useCanvasStoreContext((s) => s.viewportOffset)
 
   // Compute the visible canvas rect from the viewport
   const visibleRect = useMemo(() => {

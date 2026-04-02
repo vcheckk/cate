@@ -6,7 +6,7 @@
 import React, { useState, useCallback, useEffect } from 'react'
 import { useUIStore } from '../stores/uiStore'
 import { useAppStore } from '../stores/appStore'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreApi } from '../stores/CanvasStoreContext'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -25,6 +25,7 @@ interface SearchResult {
 // -----------------------------------------------------------------------------
 
 export function GlobalSearch() {
+  const canvasApi = useCanvasStoreApi()
   const show = useUIStore((s) => s.showGlobalSearch)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
@@ -48,7 +49,7 @@ export function GlobalSearch() {
     )
     if (!workspace) return
 
-    const canvasNodes = useCanvasStore.getState().nodes
+    const canvasNodes = canvasApi.getState().nodes
     const found: SearchResult[] = []
 
     for (const [panelId, panel] of Object.entries(workspace.panels)) {
@@ -93,7 +94,7 @@ export function GlobalSearch() {
   const selectResult = useCallback(
     (result: SearchResult) => {
       if (result.nodeId) {
-        useCanvasStore.getState().focusAndCenter(result.nodeId)
+        canvasApi.getState().focusAndCenter(result.nodeId)
       }
       close()
     },

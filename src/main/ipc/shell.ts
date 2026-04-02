@@ -4,7 +4,7 @@
 // =============================================================================
 
 import { execFile } from 'child_process'
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain } from 'electron'
 import {
   SHELL_WHICH,
   SHELL_REGISTER_TERMINAL,
@@ -14,12 +14,15 @@ import {
   SHELL_CWD_UPDATE,
 } from '../../shared/ipc-channels'
 import { terminalPids } from './terminal'
+import { sendToWindow, windowFromEvent } from '../windowRegistry'
+import { getShellEnv } from '../shellEnv'
 import type { TerminalActivity, AgentState } from '../../shared/types'
 
 interface TerminalRegistration {
   shellPid: number
   workspaceId: string
   nodeId: string
+  ownerWindowId: number
 }
 
 interface PreviousState {
@@ -300,17 +303,12 @@ async function scanTerminal(terminalId: string, info: TerminalRegistration): Pro
 
 /**
  * Start polling all registered terminals every 2 seconds.
- * Emits SHELL_ACTIVITY_UPDATE IPC events when state changes.
+ * Emits SHELL_ACTIVITY_UPDATE IPC events to the owning window.
  */
-function startPolling(mainWindow: BrowserWindow): void {
+function startPolling(): void {
   if (pollInterval) return
 
   pollInterval = setInterval(async () => {
-    if (mainWindow.isDestroyed()) {
-      stopPolling()
-      return
-    }
-
     if (pollBusy) return
     pollBusy = true
 
@@ -321,11 +319,11 @@ function startPolling(mainWindow: BrowserWindow): void {
       const scanResults = await Promise.all(
         entries.map(async ([terminalId, info]) => {
           const result = await scanTerminal(terminalId, info)
-          return { terminalId, result }
+          return { terminalId, info, result }
         })
       )
 
-      for (const { terminalId, result } of scanResults) {
+      for (const { terminalId, info, result } of scanResults) {
         // Update previous state
         previousStates.set(terminalId, {
           agentState: result.agentState,
@@ -347,42 +345,42 @@ function startPolling(mainWindow: BrowserWindow): void {
           }, 5000)
         }
 
-        // Send activity update to renderer
-        if (!mainWindow.isDestroyed()) {
-          mainWindow.webContents.send(
-            SHELL_ACTIVITY_UPDATE,
-            terminalId,
-            result.terminalActivity,
-            result.agentState,
-            result.agentName,
-          )
-        }
+        // Send activity update to the owning window
+        sendToWindow(
+          info.ownerWindowId,
+          SHELL_ACTIVITY_UPDATE,
+          terminalId,
+          result.terminalActivity,
+          result.agentState,
+          result.agentName,
+        )
       }
 
       // --- CWD updates (concurrent) ---
       const cwdResults = await Promise.all(
         entries.map(async ([terminalId, info]) => {
           const cwd = await getProcessCwd(info.shellPid)
-          return { terminalId, cwd }
+          return { terminalId, info, cwd }
         })
       )
 
-      for (const { terminalId, cwd } of cwdResults) {
-        if (cwd && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send(SHELL_CWD_UPDATE, terminalId, cwd)
+      for (const { terminalId, info, cwd } of cwdResults) {
+        if (cwd) {
+          sendToWindow(info.ownerWindowId, SHELL_CWD_UPDATE, terminalId, cwd)
         }
       }
 
       // --- Port scan (async, non-blocking) ---
       const portMap = await scanListeningPorts()
-      if (!mainWindow.isDestroyed()) {
-        for (const [terminalId, ports] of portMap) {
-          mainWindow.webContents.send(SHELL_PORTS_UPDATE, terminalId, ports.sort((a, b) => a - b))
+      for (const [terminalId, ports] of portMap) {
+        const info = registeredTerminals.get(terminalId)
+        if (info) {
+          sendToWindow(info.ownerWindowId, SHELL_PORTS_UPDATE, terminalId, ports.sort((a, b) => a - b))
         }
-        for (const terminalId of registeredTerminals.keys()) {
-          if (!portMap.has(terminalId)) {
-            mainWindow.webContents.send(SHELL_PORTS_UPDATE, terminalId, [])
-          }
+      }
+      for (const [terminalId, info] of registeredTerminals) {
+        if (!portMap.has(terminalId)) {
+          sendToWindow(info.ownerWindowId, SHELL_PORTS_UPDATE, terminalId, [])
         }
       }
     } finally {
@@ -398,10 +396,25 @@ function stopPolling(): void {
   }
 }
 
-export function registerHandlers(mainWindow: BrowserWindow): void {
+/**
+ * Unregister all terminals owned by a specific window (called on window close).
+ */
+export function unregisterTerminalsForWindow(windowId: number): void {
+  for (const [terminalId, info] of registeredTerminals) {
+    if (info.ownerWindowId === windowId) {
+      registeredTerminals.delete(terminalId)
+      previousStates.delete(terminalId)
+    }
+  }
+  if (registeredTerminals.size === 0) {
+    stopPolling()
+  }
+}
+
+export function registerHandlers(): void {
   ipcMain.handle(
     SHELL_REGISTER_TERMINAL,
-    async (_event, terminalId: string, pid?: number) => {
+    async (event, terminalId: string, pid?: number) => {
       // Look up the shell PID from the terminal module if not provided
       const shellPid = pid ?? terminalPids.get(terminalId)
       if (shellPid == null) {
@@ -409,10 +422,14 @@ export function registerHandlers(mainWindow: BrowserWindow): void {
         return
       }
 
+      const win = windowFromEvent(event)
+      const ownerWindowId = win?.id ?? -1
+
       registeredTerminals.set(terminalId, {
         shellPid,
         workspaceId: '',
         nodeId: '',
+        ownerWindowId,
       })
 
       previousStates.set(terminalId, {
@@ -422,7 +439,7 @@ export function registerHandlers(mainWindow: BrowserWindow): void {
       })
 
       // Start polling on first registration
-      startPolling(mainWindow)
+      startPolling()
     },
   )
 
@@ -433,7 +450,7 @@ export function registerHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(SHELL_WHICH, async (_event, command: string): Promise<string | null> => {
     return new Promise((resolve) => {
-      execFile('which', [command], (err, stdout) => {
+      execFile('which', [command], { env: getShellEnv() }, (err, stdout) => {
         if (err) {
           resolve(null)
         } else {
@@ -442,7 +459,4 @@ export function registerHandlers(mainWindow: BrowserWindow): void {
       })
     })
   })
-
-  // Start polling only when first terminal is registered (not immediately)
-  // Polling will be started on first register call
 }

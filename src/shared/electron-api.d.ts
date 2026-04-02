@@ -2,7 +2,7 @@
 // Type declaration for window.electronAPI exposed via contextBridge
 // =============================================================================
 
-import type { AppSettings, AgentState, FileTreeNode, GitInfo, NotificationAction, SessionSnapshot, TerminalActivity } from './types'
+import type { AppSettings, AgentState, CateWindowParams, DockWindowInitPayload, DetachedDockWindowSnapshot, DockStateSnapshot, FileTreeNode, GitInfo, NotificationAction, PanelState, PanelTransferSnapshot, PanelWindowSnapshot, Point, SessionSnapshot, TerminalActivity, WorkspaceInfo } from './types'
 
 export interface ElectronAPI {
   // ---------------------------------------------------------------------------
@@ -270,6 +270,8 @@ export interface ElectronAPI {
 
   shellWhich(command: string): Promise<string | null>
   fsDelete(filePath: string): Promise<void>
+  fsRename(oldPath: string, newPath: string): Promise<void>
+  fsMkdir(dirPath: string): Promise<void>
   shellShowInFolder(filePath: string): Promise<void>
   httpFetch(url: string): Promise<{ ok: boolean; status: number; text: string }>
 
@@ -291,6 +293,109 @@ export interface ElectronAPI {
 
   /** Subscribe to notification action events (OS notification clicked, main -> renderer). */
   onNotifyAction(callback: (action: NotificationAction) => void): () => void
+
+  // ---------------------------------------------------------------------------
+  // Window management
+  // ---------------------------------------------------------------------------
+
+  /** Create a new Cate window. Returns the Electron window ID. */
+  windowCreate(params?: CateWindowParams): Promise<number>
+
+  /** Get the Electron window ID for this renderer's window. */
+  windowGetId(): Promise<number | null>
+
+  /** Get the window type for this renderer's window. */
+  windowGetType(): Promise<string>
+
+  // ---------------------------------------------------------------------------
+  // Panel transfer (cross-window)
+  // ---------------------------------------------------------------------------
+
+  /** Initiate a cross-window panel transfer. Returns new window ID if a window was created. */
+  panelTransfer(snapshot: PanelTransferSnapshot, targetWindowId?: number): Promise<number | void>
+
+  /** Acknowledge receipt of a panel transfer (flushes buffered terminal data). */
+  panelTransferAck(ptyId?: string): Promise<void>
+
+  /** Subscribe to incoming panel transfers (main -> renderer). */
+  onPanelReceive(callback: (snapshot: PanelTransferSnapshot) => void): () => void
+
+  /** List all active panel windows with their metadata and bounds. */
+  panelWindowsList(): Promise<Array<{ windowId: number; panel: PanelState; workspaceId?: string; bounds: { x: number; y: number; width: number; height: number } }>>
+
+  /** Request this panel window to dock back into the main window. */
+  panelWindowDockBack(): Promise<void>
+
+  /** Subscribe to dock-back requests from panel windows (main -> renderer). */
+  onPanelWindowDockBack(callback: (panelWindowId: number) => void): () => void
+
+  // ---------------------------------------------------------------------------
+  // Cross-window drag-and-drop
+  // ---------------------------------------------------------------------------
+
+  /** Start an OS-level drag with a panel transfer snapshot. */
+  dragStart(snapshot: PanelTransferSnapshot): Promise<void>
+
+  /** Panel was dropped on desktop — create a new dock window. */
+  dragDetach(snapshot: PanelTransferSnapshot, workspaceId?: string): Promise<number>
+
+  /** Subscribe to drag end events (main -> renderer). */
+  onDragEnd(callback: () => void): () => void
+
+  // ---------------------------------------------------------------------------
+  // Dock window management
+  // ---------------------------------------------------------------------------
+
+  /** Subscribe to dock window initialization (main -> renderer). */
+  onDockWindowInit(callback: (payload: DockWindowInitPayload) => void): () => void
+
+  /** Sync dock window state to main process for session persistence. */
+  dockWindowSyncState(state: DockStateSnapshot & { panels: Record<string, PanelState> }): Promise<void>
+
+  /** List all dock windows with their state and bounds. */
+  dockWindowsList(): Promise<DetachedDockWindowSnapshot[]>
+
+  // ---------------------------------------------------------------------------
+  // Cross-window drag coordination
+  // ---------------------------------------------------------------------------
+
+  /** Start a cross-window drag — notifies main to broadcast to other windows. */
+  crossWindowDragStart(snapshot: PanelTransferSnapshot, screenPos: Point): Promise<void>
+
+  /** Subscribe to cross-window drag cursor updates (main -> renderer). */
+  onCrossWindowDragUpdate(callback: (screenPos: Point, snapshot: PanelTransferSnapshot) => void): () => void
+
+  /** Report that this window accepted a cross-window drop. */
+  crossWindowDragDrop(panelId: string): Promise<void>
+
+  /** Cancel an active cross-window drag. */
+  crossWindowDragCancel(): Promise<void>
+
+  /** Resolve a cross-window drag on mouseup. Returns whether a target window claimed the drop.
+   *  If not claimed, the caller should fall back to dragDetach(). */
+  crossWindowDragResolve(): Promise<{ claimed: boolean }>
+
+  // ---------------------------------------------------------------------------
+  // Workspace management (main process is source of truth)
+  // ---------------------------------------------------------------------------
+
+  /** List all workspace metadata from the main process. */
+  workspaceList(): Promise<WorkspaceInfo[]>
+
+  /** Create a new workspace in the main process. Returns the created WorkspaceInfo. */
+  workspaceCreate(options?: { name?: string; rootPath?: string; id?: string }): Promise<WorkspaceInfo>
+
+  /** Update workspace metadata in the main process. Returns the updated WorkspaceInfo. */
+  workspaceUpdate(id: string, changes: Partial<Omit<WorkspaceInfo, 'id'>>): Promise<WorkspaceInfo | null>
+
+  /** Remove a workspace from the main process. Returns true if removed. */
+  workspaceRemove(id: string): Promise<boolean>
+
+  /** Get a single workspace's metadata by ID. */
+  workspaceGet(id: string): Promise<WorkspaceInfo | null>
+
+  /** Subscribe to workspace list changes broadcast from main process. */
+  onWorkspaceChanged(callback: (workspaces: WorkspaceInfo[], originWindowId: number | null) => void): () => void
 
   // ---------------------------------------------------------------------------
   // File drag-and-drop helpers

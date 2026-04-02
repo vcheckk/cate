@@ -9,15 +9,37 @@ import {
   RefreshCw, FolderOpen, Loader2, Eye, EyeOff,
   Download, ChevronDown, ChevronRight, BookOpen, Server,
 } from 'lucide-react'
-import type { AIToolId, AIToolPresence, MCPServerConfig } from '../../shared/types'
+import type { AIToolId, AIToolPresence, MCPServerConfig, DockLayoutNode } from '../../shared/types'
 import { useAIConfigStore } from '../stores/aiConfigStore'
 import { useAppStore } from '../stores/appStore'
+import { useDockStore } from '../stores/dockStore'
 import { searchRegistry } from '../lib/aiConfig/mcpRegistry'
 import ContextMenu, { type ContextMenuItem } from '../ui/ContextMenu'
 
 // =============================================================================
 // Constants & helpers
 // =============================================================================
+
+function findActivePanel(node: DockLayoutNode): string | null {
+  if (node.type === 'tabs') return node.panelIds[node.activeIndex] ?? null
+  for (const child of node.children) {
+    const result = findActivePanel(child)
+    if (result) return result
+  }
+  return null
+}
+
+function getEditorPlacement() {
+  const centerLayout = useDockStore.getState().zones.center.layout
+  if (!centerLayout) return { target: 'dock' as const, zone: 'center' as const }
+  const activePanelId = findActivePanel(centerLayout)
+  if (!activePanelId) return { target: 'dock' as const, zone: 'center' as const }
+  const appState = useAppStore.getState()
+  const ws = appState.workspaces.find((w) => w.id === appState.selectedWorkspaceId)
+  return ws?.panels[activePanelId]?.type === 'canvas'
+    ? undefined
+    : { target: 'dock' as const, zone: 'center' as const }
+}
 
 const INPUT_CLS = 'w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-[12px] text-white/70 placeholder:text-white/30 focus:border-white/25 focus:outline-none font-mono'
 const SKILL_DESTINATIONS = ['.claude/skills', '.cursor/rules'] as const
@@ -153,7 +175,7 @@ function ToolCard({ tool, rootPath, workspaceId, onCtx }: {
                   const items: ContextMenuItem[] = []
                   if (f.exists && !f.isDirectory) {
                     items.push(
-                      { label: 'Open in Editor', onClick: () => useAppStore.getState().createEditor(workspaceId, fullPath) },
+                      { label: 'Open in Editor', onClick: () => useAppStore.getState().createEditor(workspaceId, fullPath, undefined, getEditorPlacement()) },
                       { label: 'Reveal in Finder', onClick: () => window.electronAPI.shellShowInFolder(fullPath) },
                       { label: '', onClick: () => {}, separator: true },
                       { label: 'Delete', danger: true, onClick: async () => { await window.electronAPI.fsDelete(fullPath); scan(rootPath) } },
@@ -386,7 +408,7 @@ function SkillsCard({ rootPath, workspaceId, onCtx }: {
     const safe = (newName.trim() || 'new-skill').replace(/[^a-zA-Z0-9._-]/g, '-')
     const fn = safe.endsWith('.md') ? safe : `${safe}.md`
     await installSkill(rootPath, fn, `---\nname: ${safe}\ndescription: Describe what this skill does\n---\n\n# Skill Instructions\n\nAdd your skill instructions here.\n`)
-    useAppStore.getState().createEditor(workspaceId, `${rootPath}/.claude/skills/${fn}`)
+    useAppStore.getState().createEditor(workspaceId, `${rootPath}/.claude/skills/${fn}`, undefined, getEditorPlacement())
     setNewName(''); setShowNew(false); loadSkills()
   }, [newName, rootPath, workspaceId, loadSkills])
 
@@ -431,7 +453,7 @@ function SkillsCard({ rootPath, workspaceId, onCtx }: {
                   className="flex items-center h-6 px-2 rounded hover:bg-white/[0.04] group cursor-pointer"
                   onClick={() => window.electronAPI.shellShowInFolder(`${rootPath}/.claude/skills/${s.name}`)}
                   onContextMenu={(e) => onCtx(e, [
-                    { label: 'Open in Editor', onClick: () => useAppStore.getState().createEditor(workspaceId, `${rootPath}/.claude/skills/${s.name}`) },
+                    { label: 'Open in Editor', onClick: () => useAppStore.getState().createEditor(workspaceId, `${rootPath}/.claude/skills/${s.name}`, undefined, getEditorPlacement()) },
                     { label: 'Reveal in Finder', onClick: () => window.electronAPI.shellShowInFolder(`${rootPath}/.claude/skills/${s.name}`) },
                     { label: '', onClick: () => {}, separator: true },
                     { label: 'Delete', danger: true, onClick: () => handleDelete(s.name) },

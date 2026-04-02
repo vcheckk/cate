@@ -4,8 +4,7 @@
 
 import { create } from 'zustand'
 import { useSettingsStore } from './settingsStore'
-import { useAppStore } from './appStore'
-import { useCanvasStore } from './canvasStore'
+import { useAppStore, getCanvasOperations } from './appStore'
 import { terminalRegistry } from '../lib/terminalRegistry'
 import type { NotificationAction } from '../../shared/types'
 
@@ -128,10 +127,7 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
         const panelId = terminalRegistry.panelIdForPty(terminalId) ?? terminalId
         // Use setTimeout to ensure workspace switch has applied
         setTimeout(() => {
-          const nodeId = useCanvasStore.getState().nodeForPanel(panelId)
-          if (nodeId) {
-            useCanvasStore.getState().focusAndCenter(nodeId)
-          }
+          getCanvasOperations()?.focusPanelNode(panelId)
         }, 50)
         break
       }

@@ -5,7 +5,7 @@
 
 import { useEffect } from 'react'
 import { useShortcutStore } from '../stores/shortcutStore'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreApi } from '../stores/CanvasStoreContext'
 import { useAppStore } from '../stores/appStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useUIStore } from '../stores/uiStore'
@@ -36,9 +36,11 @@ export async function ensureWorkspaceFolder(workspaceId: string): Promise<string
  * Must be called once at the top-level component (e.g. App.tsx).
  */
 export function useShortcuts(): void {
+  const canvasStoreApi = useCanvasStoreApi()
+
   useEffect(() => {
     const shortcutStore = useShortcutStore.getState
-    const canvasStore = useCanvasStore.getState
+    const canvasStore = canvasStoreApi.getState
     const appStore = useAppStore.getState
 
     function handleKeyDown(e: KeyboardEvent) {
@@ -320,5 +322,5 @@ export function useShortcuts(): void {
       document.removeEventListener('keyup', handleKeyUp, { capture: true })
       window.removeEventListener('blur', handleBlur)
     }
-  }, [])
+  }, [canvasStoreApi])
 }

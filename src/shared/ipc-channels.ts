@@ -22,6 +22,8 @@ export const FS_WATCH_STOP = 'fs:watchStop'
 export const FS_WATCH_EVENT = 'fs:watchEvent' // main -> renderer
 export const FS_STAT = 'fs:stat'
 export const FS_DELETE = 'fs:delete'
+export const FS_RENAME = 'fs:rename'
+export const FS_MKDIR = 'fs:mkdir'
 
 // Shell utilities
 export const SHELL_SHOW_IN_FOLDER = 'shell:showInFolder'
@@ -102,4 +104,43 @@ export const MCP_STATUS_UPDATE = 'mcp:statusUpdate'  // main -> renderer
 // Notifications
 export const NOTIFY_OS = 'notify:os'
 export const NOTIFY_ACTION = 'notify:action' // main -> renderer (OS notification clicked)
+
+// Window management
+export const WINDOW_CREATE = 'window:create'
+export const WINDOW_GET_ID = 'window:getId'
+export const WINDOW_GET_TYPE = 'window:getType'
+
+// Panel transfer (cross-window)
+export const PANEL_TRANSFER = 'panel:transfer'
+export const PANEL_RECEIVE = 'panel:receive'       // main -> renderer
+export const PANEL_TRANSFER_ACK = 'panel:transferAck'
+
+// Panel window queries (session persistence)
+export const PANEL_WINDOWS_LIST = 'panel:windowsList'
+export const PANEL_WINDOW_DOCK_BACK = 'panel:dockBack'  // renderer -> main (double-click title bar)
+
+// Cross-window drag-and-drop
+export const DRAG_START = 'drag:start'
+export const DRAG_DETACH = 'drag:detach'
+export const DRAG_END = 'drag:end'                 // main -> renderer
+
+// Dock window management
+export const DOCK_WINDOW_INIT = 'dock:windowInit'           // main -> renderer
+export const DOCK_WINDOW_SYNC_STATE = 'dock:windowSyncState' // renderer -> main
+export const DOCK_WINDOWS_LIST = 'dock:windowsList'          // renderer -> main
+
+// Cross-window drag coordination
+export const CROSS_WINDOW_DRAG_START = 'crossDrag:start'       // renderer -> main
+export const CROSS_WINDOW_DRAG_UPDATE = 'crossDrag:update'     // main -> renderer
+export const CROSS_WINDOW_DRAG_DROP = 'crossDrag:drop'         // renderer -> main
+export const CROSS_WINDOW_DRAG_CANCEL = 'crossDrag:cancel'     // renderer -> main
+export const CROSS_WINDOW_DRAG_RESOLVE = 'crossDrag:resolve'   // renderer -> main (mouseup — resolve drop or create window)
+
+// Workspace management (main process is source of truth)
+export const WORKSPACE_LIST = 'workspace:list'
+export const WORKSPACE_CREATE = 'workspace:create'
+export const WORKSPACE_UPDATE = 'workspace:update'
+export const WORKSPACE_REMOVE = 'workspace:remove'
+export const WORKSPACE_GET = 'workspace:get'
+export const WORKSPACE_CHANGED = 'workspace:changed' // main -> renderer (broadcast)
 

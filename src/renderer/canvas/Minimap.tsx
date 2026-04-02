@@ -3,7 +3,7 @@
 // =============================================================================
 
 import React, { useCallback, useRef } from 'react'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreContext, useCanvasStoreApi } from '../stores/CanvasStoreContext'
 import { useWorkspacePanels } from '../stores/appStore'
 
 const MINIMAP_WIDTH = 200
@@ -20,12 +20,13 @@ function panelColor(panelType: string): string {
 }
 
 const Minimap: React.FC = () => {
-  const nodes = useCanvasStore((s) => s.nodes)
-  const regions = useCanvasStore((s) => s.regions)
-  const viewportOffset = useCanvasStore((s) => s.viewportOffset)
-  const zoomLevel = useCanvasStore((s) => s.zoomLevel)
-  const containerSize = useCanvasStore((s) => s.containerSize)
+  const nodes = useCanvasStoreContext((s) => s.nodes)
+  const regions = useCanvasStoreContext((s) => s.regions)
+  const viewportOffset = useCanvasStoreContext((s) => s.viewportOffset)
+  const zoomLevel = useCanvasStoreContext((s) => s.zoomLevel)
+  const containerSize = useCanvasStoreContext((s) => s.containerSize)
   const panels = useWorkspacePanels()
+  const canvasApi = useCanvasStoreApi()
   const minimapRef = useRef<HTMLDivElement>(null)
 
   const nodeList = Object.values(nodes)
@@ -34,7 +35,7 @@ const Minimap: React.FC = () => {
   // Handle click/drag to navigate (must be before any early returns)
   const navigateToPoint = useCallback((clientX: number, clientY: number) => {
     if (!minimapRef.current) return
-    const state = useCanvasStore.getState()
+    const state = canvasApi.getState()
     const nl = Object.values(state.nodes)
     if (nl.length === 0) return
 

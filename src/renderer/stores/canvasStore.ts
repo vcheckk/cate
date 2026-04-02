@@ -3,8 +3,9 @@
 // Ported from CanvasState.swift
 // =============================================================================
 
-import { create } from 'zustand'
+import { create, type UseBoundStore } from 'zustand'
 import { useStoreWithEqualityFn } from 'zustand/traditional'
+import type { StoreApi } from 'zustand'
 import type {
   CanvasNodeId,
   CanvasNodeState,
@@ -25,23 +26,10 @@ import { autoLayout as computeAutoLayout } from '../canvas/layoutEngine'
 import { viewToCanvas as viewToCanvasCoords } from '../lib/coordinates'
 
 // -----------------------------------------------------------------------------
-// Module-level zoom animation state — shared across all store action calls
-// -----------------------------------------------------------------------------
-
-let activeZoomAnimationRafId = 0
-
-export function cancelZoomAnimation() {
-  if (activeZoomAnimationRafId) {
-    cancelAnimationFrame(activeZoomAnimationRafId)
-    activeZoomAnimationRafId = 0
-  }
-}
-
-// -----------------------------------------------------------------------------
 // Store interface
 // -----------------------------------------------------------------------------
 
-interface CanvasStoreState {
+export interface CanvasStoreState {
   nodes: Record<CanvasNodeId, CanvasNodeState>
   regions: Record<string, CanvasRegion>
   annotations: Record<string, CanvasAnnotation>
@@ -62,7 +50,10 @@ interface CanvasStoreState {
   selectedRegionIds: Set<string>
 }
 
-interface CanvasStoreActions {
+export interface CanvasStoreActions {
+  // Zoom animation control
+  cancelZoomAnimation: () => void
+
   // Mutations
   addNode: (
     panelId: string,
@@ -235,10 +226,21 @@ function rectsOverlap(a: Rect, b: Rect): boolean {
 }
 
 // -----------------------------------------------------------------------------
-// Store
+// Store factory — creates independent canvas store instances
 // -----------------------------------------------------------------------------
 
-export const useCanvasStore = create<CanvasStore>((set, get) => ({
+export function createCanvasStore(): UseBoundStore<StoreApi<CanvasStore>> {
+  // Each store instance gets its own zoom animation RAF tracking
+  let activeZoomAnimationRafId = 0
+
+  function cancelZoomAnim() {
+    if (activeZoomAnimationRafId) {
+      cancelAnimationFrame(activeZoomAnimationRafId)
+      activeZoomAnimationRafId = 0
+    }
+  }
+
+  return create<CanvasStore>((set, get) => ({
   // --- State ---
   nodes: {},
   regions: {},
@@ -254,6 +256,8 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   selectedRegionIds: new Set<string>(),
 
   // --- Actions ---
+
+  cancelZoomAnimation: cancelZoomAnim,
 
   addNode(panelId, panelType, position?, size?) {
     const state = get()
@@ -449,7 +453,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   },
 
   animateZoomTo(targetZoom) {
-    cancelZoomAnimation()
+    cancelZoomAnim()
 
     const clampedTarget = Math.min(Math.max(targetZoom, ZOOM_MIN), ZOOM_MAX)
 
@@ -1101,6 +1105,18 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     })
   },
 }))
+}
+
+// -----------------------------------------------------------------------------
+// Default singleton — backward-compatible during migration
+// -----------------------------------------------------------------------------
+
+export const useCanvasStore = createCanvasStore()
+
+/** @deprecated Use store.getState().cancelZoomAnimation() instead */
+export function cancelZoomAnimation() {
+  useCanvasStore.getState().cancelZoomAnimation()
+}
 
 // -----------------------------------------------------------------------------
 // Granular selectors
@@ -1110,9 +1126,9 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
  * Returns a stable sorted array of node IDs ordered by zOrder.
  * Only triggers a re-render when nodes are added, removed, or z-order changes.
  */
-export function useNodeIds(): string[] {
+export function useNodeIds(store?: UseBoundStore<StoreApi<CanvasStore>>): string[] {
   return useStoreWithEqualityFn(
-    useCanvasStore,
+    store ?? useCanvasStore,
     (s) => Object.values(s.nodes)
       .sort((a, b) => a.zOrder - b.zOrder)
       .map(n => n.id),

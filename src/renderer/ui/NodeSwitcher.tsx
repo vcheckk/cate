@@ -5,7 +5,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useUIStore } from '../stores/uiStore'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreContext, useCanvasStoreApi } from '../stores/CanvasStoreContext'
 import { useAppStore } from '../stores/appStore'
 import type { PanelType, CanvasNodeId } from '../../shared/types'
 
@@ -78,10 +78,11 @@ function PanelIcon({ type }: { type: PanelType }) {
 export const NodeSwitcher: React.FC = () => {
   const showNodeSwitcher = useUIStore((s) => s.showNodeSwitcher)
   const setShowNodeSwitcher = useUIStore((s) => s.setShowNodeSwitcher)
-  const focusNode = useCanvasStore((s) => s.focusNode)
-  const setViewportOffset = useCanvasStore((s) => s.setViewportOffset)
-  const zoomLevel = useCanvasStore((s) => s.zoomLevel)
-  const nodes = useCanvasStore((s) => s.nodes)
+  const canvasApi = useCanvasStoreApi()
+  const focusNode = useCanvasStoreContext((s) => s.focusNode)
+  const setViewportOffset = useCanvasStoreContext((s) => s.setViewportOffset)
+  const zoomLevel = useCanvasStoreContext((s) => s.zoomLevel)
+  const nodes = useCanvasStoreContext((s) => s.nodes)
   const workspace = useAppStore((s) => s.selectedWorkspace())
 
   // Build items list: sorted by creation order, with panel info
@@ -89,7 +90,7 @@ export const NodeSwitcher: React.FC = () => {
   const nodeIds = useMemo(() => Object.keys(nodes).sort(), [nodes])
   const items = useMemo(() => {
     if (!workspace) return []
-    const sorted = useCanvasStore.getState().sortedNodesByCreationOrder()
+    const sorted = canvasApi.getState().sortedNodesByCreationOrder()
     return sorted.map((node) => {
       const panel = workspace.panels[node.panelId]
       return {

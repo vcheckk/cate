@@ -1,0 +1,637 @@
+// =============================================================================
+// Dock Store — Zustand state for dock zone layout and panel locations.
+// Manages VS Code-style dock zones (left, right, bottom) with split and tab support.
+// =============================================================================
+
+import { create } from 'zustand'
+import type {
+  DockZonePosition,
+  DockLayoutNode,
+  DockSplitNode,
+  DockTabStack,
+  DockZoneState,
+  WindowDockState,
+  PanelLocation,
+  DockDropTarget,
+  Point,
+} from '../../shared/types'
+import { SIDE_ZONES, ALL_ZONES } from '../../shared/types'
+import { findTabStack, findZoneForStack } from './dockTreeUtils'
+
+// -----------------------------------------------------------------------------
+// Constants
+// -----------------------------------------------------------------------------
+
+const DEFAULT_SIDE_ZONE_SIZE = 260
+const DEFAULT_BOTTOM_ZONE_SIZE = 240
+const MIN_ZONE_SIZE = 120
+
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+
+function generateId(): string {
+  return crypto.randomUUID()
+}
+
+function createEmptyZone(position: DockZonePosition): DockZoneState {
+  const isBottom = position === 'bottom'
+  return {
+    position,
+    visible: false,
+    size: isBottom ? DEFAULT_BOTTOM_ZONE_SIZE : DEFAULT_SIDE_ZONE_SIZE,
+    layout: null,
+  }
+}
+
+function createDefaultDockState(): WindowDockState {
+  return {
+    left: createEmptyZone('left'),
+    right: createEmptyZone('right'),
+    bottom: createEmptyZone('bottom'),
+    center: {
+      position: 'center',
+      visible: true,
+      size: 0, // not used — center is flex-1
+      layout: null, // initialized with canvas panel by app on startup
+    },
+  }
+}
+
+
+/** Remove a panel from a tab stack in the layout tree. Returns updated tree or null if stack is now empty. */
+function removePanelFromTree(node: DockLayoutNode, panelId: string): DockLayoutNode | null {
+  if (node.type === 'tabs') {
+    const idx = node.panelIds.indexOf(panelId)
+    if (idx === -1) return node
+    const newPanelIds = node.panelIds.filter((id) => id !== panelId)
+    if (newPanelIds.length === 0) return null
+    return {
+      ...node,
+      panelIds: newPanelIds,
+      activeIndex: Math.min(node.activeIndex, newPanelIds.length - 1),
+    }
+  }
+  // Split node — recurse into children
+  const newChildren: DockLayoutNode[] = []
+  const newRatios: number[] = []
+  for (let i = 0; i < node.children.length; i++) {
+    const updated = removePanelFromTree(node.children[i], panelId)
+    if (updated) {
+      newChildren.push(updated)
+      newRatios.push(node.ratios[i])
+    }
+  }
+  if (newChildren.length === 0) return null
+  if (newChildren.length === 1) return newChildren[0] // collapse single-child split
+  // Re-normalize ratios
+  const total = newRatios.reduce((a, b) => a + b, 0)
+  return {
+    ...node,
+    children: newChildren,
+    ratios: newRatios.map((r) => r / total),
+  }
+}
+
+/** Replace a tab stack in the layout tree with a new node */
+function replaceInTree(
+  node: DockLayoutNode,
+  stackId: string,
+  replacement: DockLayoutNode,
+): DockLayoutNode {
+  if (node.type === 'tabs') {
+    return node.id === stackId ? replacement : node
+  }
+  return {
+    ...node,
+    children: node.children.map((child) => replaceInTree(child, stackId, replacement)),
+  }
+}
+
+/** Find the parent split node of a given child (by id) and the child's index. */
+function findParentSplit(
+  node: DockLayoutNode,
+  childId: string,
+): { parent: DockSplitNode; index: number } | null {
+  if (node.type !== 'split') return null
+  for (let i = 0; i < node.children.length; i++) {
+    if (node.children[i].id === childId) {
+      return { parent: node, index: i }
+    }
+  }
+  for (const child of node.children) {
+    const found = findParentSplit(child, childId)
+    if (found) return found
+  }
+  return null
+}
+
+/**
+ * Insert a new child into an existing split node adjacent to the given index.
+ * When isAfter=true, inserts after; when false, inserts before.
+ * Redistributes ratios so the new child gets an equal share taken from
+ * the sibling it was split from.
+ */
+function insertIntoSplit(
+  root: DockLayoutNode,
+  splitId: string,
+  refIndex: number,
+  newChild: DockLayoutNode,
+  isAfter: boolean = true,
+): DockLayoutNode {
+  if (root.type === 'tabs') return root
+  if (root.type === 'split' && root.id === splitId) {
+    const newChildren = [...root.children]
+    const insertPos = isAfter ? refIndex + 1 : refIndex
+    newChildren.splice(insertPos, 0, newChild)
+    const newRatios = [...root.ratios]
+    // Split the existing sibling's ratio in half for the new child
+    const share = newRatios[refIndex] / 2
+    newRatios[refIndex] = share
+    newRatios.splice(insertPos, 0, share)
+    return { ...root, children: newChildren, ratios: newRatios }
+  }
+  return {
+    ...root,
+    children: root.children.map((child) =>
+      insertIntoSplit(child, splitId, refIndex, newChild, isAfter),
+    ),
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Store interface
+// -----------------------------------------------------------------------------
+
+interface DockStoreState {
+  zones: WindowDockState
+  panelLocations: Record<string, PanelLocation>
+}
+
+interface DockStoreActions {
+  // Zone visibility
+  toggleZone: (position: DockZonePosition) => void
+  setZoneSize: (position: DockZonePosition, size: number) => void
+
+  // Panel placement
+  dockPanel: (panelId: string, zone: DockZonePosition, target?: DockDropTarget) => void
+  undockPanel: (panelId: string) => void
+  moveToCanvas: (panelId: string, canvasId: string, canvasNodeId: string) => void
+
+  // Tab management within a stack
+  moveTab: (panelId: string, fromStackId: string, toStackId: string, index?: number) => void
+  setActiveTab: (stackId: string, index: number) => void
+
+  // Split management
+  setSplitRatio: (splitId: string, ratios: number[]) => void
+  collapseStack: (stackId: string) => void
+
+  // Location tracking
+  setPanelLocation: (panelId: string, location: PanelLocation) => void
+  removePanelLocation: (panelId: string) => void
+  getPanelLocation: (panelId: string) => PanelLocation | undefined
+
+  // Serialization
+  getSnapshot: () => { zones: WindowDockState; locations: Record<string, PanelLocation> }
+  restoreSnapshot: (snapshot: { zones: WindowDockState; locations: Record<string, PanelLocation> }) => void
+}
+
+export type DockStore = DockStoreState & DockStoreActions
+
+// -----------------------------------------------------------------------------
+// Store factory — each dock window gets its own independent store instance
+// -----------------------------------------------------------------------------
+
+export function createDockStore(initialState?: { zones: WindowDockState; locations: Record<string, PanelLocation> }) {
+  return create<DockStore>((set, get) => ({
+  zones: initialState?.zones ?? createDefaultDockState(),
+  panelLocations: initialState?.locations ?? {},
+
+  // --- Zone visibility ---
+
+  toggleZone(position) {
+    set((state) => ({
+      zones: {
+        ...state.zones,
+        [position]: {
+          ...state.zones[position],
+          visible: !state.zones[position].visible,
+        },
+      },
+    }))
+  },
+
+  setZoneSize(position, size) {
+    const clamped = Math.max(MIN_ZONE_SIZE, size)
+    set((state) => ({
+      zones: {
+        ...state.zones,
+        [position]: {
+          ...state.zones[position],
+          size: clamped,
+        },
+      },
+    }))
+  },
+
+  // --- Panel placement ---
+
+  dockPanel(panelId, zone, target) {
+    set((state) => {
+      const zoneState = state.zones[zone]
+      let newLayout = zoneState.layout
+
+      // Guard: remove panel from target zone layout first to prevent duplicates
+      if (newLayout) {
+        newLayout = removePanelFromTree(newLayout, panelId)
+      }
+
+      if (target?.type === 'tab' && target.stackId) {
+        // Add to existing tab stack
+        const stack = findTabStack(newLayout, target.stackId)
+        if (stack) {
+          const insertIndex = target.index ?? stack.panelIds.length
+          const newPanelIds = [...stack.panelIds]
+          newPanelIds.splice(insertIndex, 0, panelId)
+          const updatedStack: DockTabStack = {
+            ...stack,
+            panelIds: newPanelIds,
+            activeIndex: insertIndex,
+          }
+          newLayout = newLayout
+            ? replaceInTree(newLayout, stack.id, updatedStack)
+            : updatedStack
+        }
+      } else if (target?.type === 'split' && target.stackId) {
+        // Split an existing stack
+        const newStack: DockTabStack = {
+          type: 'tabs',
+          id: generateId(),
+          panelIds: [panelId],
+          activeIndex: 0,
+        }
+        const direction: 'horizontal' | 'vertical' =
+          target.edge === 'left' || target.edge === 'right' ? 'horizontal' : 'vertical'
+        const isAfter = target.edge === 'right' || target.edge === 'bottom'
+        const existingStack = findTabStack(newLayout, target.stackId)
+        if (existingStack && newLayout) {
+          // If the stack's parent split has the same direction, insert as a
+          // flat sibling instead of nesting a new split. This keeps 3+ way
+          // splits flat so each resize handle only affects its two neighbors.
+          const parentInfo = findParentSplit(newLayout, target.stackId)
+          if (parentInfo && parentInfo.parent.direction === direction) {
+            newLayout = insertIntoSplit(
+              newLayout,
+              parentInfo.parent.id,
+              parentInfo.index,
+              newStack,
+              isAfter,
+            )
+          } else {
+            const splitNode: DockSplitNode = {
+              type: 'split',
+              id: generateId(),
+              direction,
+              children: isAfter ? [existingStack, newStack] : [newStack, existingStack],
+              ratios: [0.5, 0.5],
+            }
+            newLayout = replaceInTree(newLayout, target.stackId, splitNode)
+          }
+        }
+      } else {
+        // Default: add to zone as new tab stack (or append to root stack)
+        if (!newLayout) {
+          newLayout = {
+            type: 'tabs',
+            id: generateId(),
+            panelIds: [panelId],
+            activeIndex: 0,
+          }
+        } else if (newLayout.type === 'tabs') {
+          newLayout = {
+            ...newLayout,
+            panelIds: [...newLayout.panelIds, panelId],
+            activeIndex: newLayout.panelIds.length,
+          }
+        } else {
+          // Root is a split — find the first tab stack and append there
+          const firstStack = findFirstTabStack(newLayout)
+          if (firstStack) {
+            const updatedStack: DockTabStack = {
+              ...firstStack,
+              panelIds: [...firstStack.panelIds, panelId],
+              activeIndex: firstStack.panelIds.length,
+            }
+            newLayout = replaceInTree(newLayout, firstStack.id, updatedStack)
+          }
+        }
+      }
+
+      return {
+        zones: {
+          ...state.zones,
+          [zone]: {
+            ...zoneState,
+            visible: true, // auto-show zone when docking
+            layout: newLayout,
+          },
+        },
+        panelLocations: {
+          ...state.panelLocations,
+          [panelId]: {
+            type: 'dock',
+            zone,
+            stackId: getStackIdForPanel(newLayout, panelId) ?? '',
+          },
+        },
+      }
+    })
+  },
+
+  undockPanel(panelId) {
+    set((state) => {
+      const location = state.panelLocations[panelId]
+      if (!location || location.type !== 'dock') return state
+
+      const zone = location.zone
+      const zoneState = state.zones[zone]
+      if (!zoneState.layout) return state
+
+      const newLayout = removePanelFromTree(zoneState.layout, panelId)
+
+      const { [panelId]: _removed, ...remainingLocations } = state.panelLocations
+
+      return {
+        zones: {
+          ...state.zones,
+          [zone]: {
+            ...zoneState,
+            layout: newLayout,
+            // Auto-hide zone if it's now empty (never hide center)
+            visible: zone === 'center' ? true : (newLayout !== null ? zoneState.visible : false),
+          },
+        },
+        panelLocations: remainingLocations,
+      }
+    })
+  },
+
+  moveToCanvas(panelId, canvasId, canvasNodeId) {
+    // First undock if docked
+    const location = get().panelLocations[panelId]
+    if (location?.type === 'dock') {
+      get().undockPanel(panelId)
+    }
+    // Set canvas location
+    set((state) => ({
+      panelLocations: {
+        ...state.panelLocations,
+        [panelId]: { type: 'canvas', canvasId, canvasNodeId },
+      },
+    }))
+  },
+
+  // --- Tab management ---
+
+  moveTab(panelId, fromStackId, toStackId, index) {
+    set((state) => {
+      const zones = { ...state.zones }
+
+      // Find and update source and target stacks across all zones
+      for (const pos of ALL_ZONES) {
+        const zoneState = zones[pos]
+        if (!zoneState.layout) continue
+
+        // Remove from source
+        const fromStack = findTabStack(zoneState.layout, fromStackId)
+        if (fromStack) {
+          const newPanelIds = fromStack.panelIds.filter((id) => id !== panelId)
+          if (newPanelIds.length === 0) {
+            zones[pos] = {
+              ...zoneState,
+              layout: removePanelFromTree(zoneState.layout, panelId),
+            }
+          } else {
+            const updated: DockTabStack = {
+              ...fromStack,
+              panelIds: newPanelIds,
+              activeIndex: Math.min(fromStack.activeIndex, newPanelIds.length - 1),
+            }
+            zones[pos] = {
+              ...zoneState,
+              layout: replaceInTree(zoneState.layout, fromStackId, updated),
+            }
+          }
+        }
+
+        // Add to target
+        const toStack = findTabStack(zones[pos].layout, toStackId)
+        if (toStack) {
+          const insertIndex = index ?? toStack.panelIds.length
+          const newPanelIds = [...toStack.panelIds]
+          newPanelIds.splice(insertIndex, 0, panelId)
+          const updated: DockTabStack = {
+            ...toStack,
+            panelIds: newPanelIds,
+            activeIndex: insertIndex,
+          }
+          zones[pos] = {
+            ...zones[pos],
+            layout: zones[pos].layout
+              ? replaceInTree(zones[pos].layout!, toStackId, updated)
+              : updated,
+          }
+        }
+      }
+
+      return {
+        zones,
+        panelLocations: {
+          ...state.panelLocations,
+          [panelId]: {
+            type: 'dock',
+            zone: findZoneForStack(zones, toStackId) ?? 'left',
+            stackId: toStackId,
+          },
+        },
+      }
+    })
+  },
+
+  setActiveTab(stackId, index) {
+    set((state) => {
+      const zones = { ...state.zones }
+      for (const pos of ALL_ZONES) {
+        const zoneState = zones[pos]
+        if (!zoneState.layout) continue
+        const stack = findTabStack(zoneState.layout, stackId)
+        if (stack && index >= 0 && index < stack.panelIds.length) {
+          const updated: DockTabStack = { ...stack, activeIndex: index }
+          zones[pos] = {
+            ...zoneState,
+            layout: replaceInTree(zoneState.layout, stackId, updated),
+          }
+          break
+        }
+      }
+      return { zones }
+    })
+  },
+
+  // --- Split management ---
+
+  setSplitRatio(splitId, ratios) {
+    set((state) => {
+      const zones = { ...state.zones }
+      for (const pos of ALL_ZONES) {
+        const zoneState = zones[pos]
+        if (!zoneState.layout) continue
+        const updated = updateSplitRatios(zoneState.layout, splitId, ratios)
+        if (updated !== zoneState.layout) {
+          zones[pos] = { ...zoneState, layout: updated }
+          break
+        }
+      }
+      return { zones }
+    })
+  },
+
+  collapseStack(stackId) {
+    set((state) => {
+      const zones = { ...state.zones }
+      const removedPanelIds: string[] = []
+
+      for (const pos of ALL_ZONES) {
+        const zoneState = zones[pos]
+        if (!zoneState.layout) continue
+        const stack = findTabStack(zoneState.layout, stackId)
+        if (!stack) continue
+
+        removedPanelIds.push(...stack.panelIds)
+
+        // Remove the entire stack from the tree
+        let newLayout: DockLayoutNode | null = zoneState.layout
+        for (const panelId of stack.panelIds) {
+          if (newLayout) {
+            newLayout = removePanelFromTree(newLayout, panelId)
+          }
+        }
+
+        zones[pos] = {
+          ...zoneState,
+          layout: newLayout,
+          visible: pos === 'center' ? true : (newLayout !== null ? zoneState.visible : false),
+        }
+        break
+      }
+
+      const newLocations = { ...state.panelLocations }
+      for (const panelId of removedPanelIds) {
+        delete newLocations[panelId]
+      }
+
+      return { zones, panelLocations: newLocations }
+    })
+  },
+
+  // --- Location tracking ---
+
+  setPanelLocation(panelId, location) {
+    set((state) => ({
+      panelLocations: { ...state.panelLocations, [panelId]: location },
+    }))
+  },
+
+  removePanelLocation(panelId) {
+    set((state) => {
+      const { [panelId]: _removed, ...remaining } = state.panelLocations
+      return { panelLocations: remaining }
+    })
+  },
+
+  getPanelLocation(panelId) {
+    return get().panelLocations[panelId]
+  },
+
+  // --- Serialization ---
+
+  getSnapshot() {
+    const state = get()
+    return {
+      zones: state.zones,
+      locations: { ...state.panelLocations },
+    }
+  },
+
+  restoreSnapshot(snapshot) {
+    set({
+      zones: snapshot.zones,
+      panelLocations: snapshot.locations,
+    })
+  },
+}))
+}
+
+/** Global singleton dock store — used by the main window */
+export const useDockStore = createDockStore()
+
+// -----------------------------------------------------------------------------
+// Internal helpers
+// -----------------------------------------------------------------------------
+
+function findFirstTabStack(node: DockLayoutNode): DockTabStack | null {
+  if (node.type === 'tabs') return node
+  for (const child of node.children) {
+    const found = findFirstTabStack(child)
+    if (found) return found
+  }
+  return null
+}
+
+function getStackIdForPanel(layout: DockLayoutNode | null, panelId: string): string | null {
+  if (!layout) return null
+  if (layout.type === 'tabs') {
+    return layout.panelIds.includes(panelId) ? layout.id : null
+  }
+  for (const child of layout.children) {
+    const found = getStackIdForPanel(child, panelId)
+    if (found) return found
+  }
+  return null
+}
+
+
+function updateSplitRatios(
+  node: DockLayoutNode,
+  splitId: string,
+  ratios: number[],
+): DockLayoutNode {
+  if (node.type === 'split') {
+    if (node.id === splitId) {
+      return { ...node, ratios }
+    }
+    const newChildren = node.children.map((child) =>
+      updateSplitRatios(child, splitId, ratios),
+    )
+    if (newChildren.some((c, i) => c !== node.children[i])) {
+      return { ...node, children: newChildren }
+    }
+  }
+  return node
+}
+
+// -----------------------------------------------------------------------------
+// Selectors
+// -----------------------------------------------------------------------------
+
+export function useDockZone(position: DockZonePosition): DockZoneState {
+  return useDockStore((s) => s.zones[position])
+}
+
+export function useDockZoneVisible(position: DockZonePosition): boolean {
+  return useDockStore((s) => s.zones[position].visible)
+}
+
+export function useIsDocked(panelId: string): boolean {
+  return useDockStore((s) => s.panelLocations[panelId]?.type === 'dock')
+}

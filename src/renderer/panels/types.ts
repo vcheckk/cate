@@ -50,6 +50,8 @@ export function panelIcon(type: PanelType): string {
       return 'FolderOpen'
     case 'projectList':
       return 'Layers'
+    case 'canvas':
+      return 'Layout'
   }
 }
 
@@ -68,5 +70,7 @@ export function panelColor(type: PanelType): string {
       return '#5AC8FA' // teal
     case 'projectList':
       return '#FFD60A' // yellow
+    case 'canvas':
+      return '#BF5AF2' // purple
   }
 }

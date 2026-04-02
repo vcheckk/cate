@@ -3,27 +3,33 @@
 // =============================================================================
 
 import { execFile } from 'child_process'
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain } from 'electron'
 import {
   GIT_BRANCH_UPDATE,
   GIT_MONITOR_START,
   GIT_MONITOR_STOP,
 } from '../../shared/ipc-channels'
+import { sendToWindow, windowFromEvent } from '../windowRegistry'
 
 const POLL_INTERVAL_MS = 5000
 
-const activeMonitors: Map<string, ReturnType<typeof setInterval>> = new Map()
+interface MonitorEntry {
+  interval: ReturnType<typeof setInterval>
+  ownerWindowId: number
+}
+
+const activeMonitors: Map<string, MonitorEntry> = new Map()
 const lastState: Map<string, { branch: string; isDirty: boolean }> = new Map()
 
 function pollGitStatus(
-  mainWindow: BrowserWindow,
+  ownerWindowId: number,
   workspaceId: string,
   rootPath: string,
 ): void {
   execFile('git', ['-C', rootPath, 'branch', '--show-current'], {
     timeout: 3000,
   }, (err, branchOut) => {
-    if (err || mainWindow.isDestroyed()) return
+    if (err) return
 
     const branch = branchOut.trim()
     if (!branch) return
@@ -31,7 +37,7 @@ function pollGitStatus(
     execFile('git', ['-C', rootPath, 'status', '--porcelain', '-uno'], {
       timeout: 3000,
     }, (err2, statusOut) => {
-      if (err2 || mainWindow.isDestroyed()) return
+      if (err2) return
 
       const isDirty = statusOut.trim().length > 0
 
@@ -39,30 +45,46 @@ function pollGitStatus(
       if (prev && prev.branch === branch && prev.isDirty === isDirty) return
 
       lastState.set(workspaceId, { branch, isDirty })
-      mainWindow.webContents.send(GIT_BRANCH_UPDATE, workspaceId, branch, isDirty)
+      sendToWindow(ownerWindowId, GIT_BRANCH_UPDATE, workspaceId, branch, isDirty)
     })
   })
 }
 
-export function registerHandlers(mainWindow: BrowserWindow): void {
-  ipcMain.on(GIT_MONITOR_START, (_event, workspaceId: string, rootPath: string) => {
+/**
+ * Stop all monitors owned by a specific window (called on window close).
+ */
+export function stopMonitorsForWindow(windowId: number): void {
+  for (const [workspaceId, entry] of activeMonitors) {
+    if (entry.ownerWindowId === windowId) {
+      clearInterval(entry.interval)
+      activeMonitors.delete(workspaceId)
+      lastState.delete(workspaceId)
+    }
+  }
+}
+
+export function registerHandlers(): void {
+  ipcMain.on(GIT_MONITOR_START, (event, workspaceId: string, rootPath: string) => {
     const existing = activeMonitors.get(workspaceId)
     if (existing) {
-      clearInterval(existing)
+      clearInterval(existing.interval)
     }
 
-    pollGitStatus(mainWindow, workspaceId, rootPath)
+    const win = windowFromEvent(event)
+    const ownerWindowId = win?.id ?? -1
+
+    pollGitStatus(ownerWindowId, workspaceId, rootPath)
     const interval = setInterval(() => {
-      pollGitStatus(mainWindow, workspaceId, rootPath)
+      pollGitStatus(ownerWindowId, workspaceId, rootPath)
     }, POLL_INTERVAL_MS)
 
-    activeMonitors.set(workspaceId, interval)
+    activeMonitors.set(workspaceId, { interval, ownerWindowId })
   })
 
   ipcMain.on(GIT_MONITOR_STOP, (_event, workspaceId: string) => {
-    const interval = activeMonitors.get(workspaceId)
-    if (interval) {
-      clearInterval(interval)
+    const entry = activeMonitors.get(workspaceId)
+    if (entry) {
+      clearInterval(entry.interval)
       activeMonitors.delete(workspaceId)
     }
     lastState.delete(workspaceId)

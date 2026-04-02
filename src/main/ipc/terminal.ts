@@ -3,7 +3,7 @@
 // =============================================================================
 
 import { IPty, spawn as ptySpawn } from 'node-pty'
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain } from 'electron'
 import os from 'os'
 import { execFile } from 'child_process'
 import {
@@ -18,12 +18,92 @@ import {
   TERMINAL_LOG_DELETE,
 } from '../../shared/ipc-channels'
 import { getOrCreateLogger, removeLogger, flushAll as flushAllLoggers } from './terminalLogger'
+import { sendToWindow, windowFromEvent } from '../windowRegistry'
+import { getShellEnv } from '../shellEnv'
 
 // Active terminal PTY instances keyed by terminal ID
 const terminals: Map<string, IPty> = new Map()
 
 // Shell PIDs keyed by terminal ID — exported for shell.ts process monitor
 export const terminalPids: Map<string, number> = new Map()
+
+// Which window owns each terminal (windowId)
+const terminalOwners: Map<string, number> = new Map()
+
+// =============================================================================
+// Terminal transfer buffering — holds PTY output during cross-window migration
+// =============================================================================
+
+interface TerminalTransferState {
+  buffer: Buffer[]
+  bufferSize: number
+  targetWindowId: number
+}
+
+const transferStates = new Map<string, TerminalTransferState>()
+const MAX_TRANSFER_BUFFER = 64 * 1024 // 64 KB
+const TRANSFER_TIMEOUT_MS = 5000
+
+/**
+ * Begin buffering PTY output for a terminal being transferred to another window.
+ * Output is accumulated until acknowledgeTerminalTransfer() is called.
+ */
+export function beginTerminalTransfer(ptyId: string, targetWindowId: number): void {
+  transferStates.set(ptyId, {
+    buffer: [],
+    bufferSize: 0,
+    targetWindowId,
+  })
+
+  // Safety timeout: if ACK never arrives, flush back to source and cancel
+  setTimeout(() => {
+    const state = transferStates.get(ptyId)
+    if (!state) return // already acknowledged
+    // Flush buffer to whatever window currently owns the terminal
+    const ownerWindowId = terminalOwners.get(ptyId)
+    if (ownerWindowId != null) {
+      for (const chunk of state.buffer) {
+        sendToWindow(ownerWindowId, TERMINAL_DATA, ptyId, chunk.toString())
+      }
+    }
+    transferStates.delete(ptyId)
+  }, TRANSFER_TIMEOUT_MS)
+}
+
+/**
+ * Complete a terminal transfer: flush buffered output to the new window and
+ * update the terminal owner mapping.
+ */
+export function acknowledgeTerminalTransfer(ptyId: string): void {
+  const state = transferStates.get(ptyId)
+  if (!state) return
+
+  const { targetWindowId, buffer } = state
+
+  // Update ownership
+  terminalOwners.set(ptyId, targetWindowId)
+
+  // Flush buffered data to the target window
+  for (const chunk of buffer) {
+    sendToWindow(targetWindowId, TERMINAL_DATA, ptyId, chunk.toString())
+  }
+
+  transferStates.delete(ptyId)
+}
+
+/**
+ * Get the owning window ID for a terminal.
+ */
+export function getTerminalOwner(terminalId: string): number | undefined {
+  return terminalOwners.get(terminalId)
+}
+
+/**
+ * Reassign a terminal to a different window (e.g. when dragging a panel out).
+ */
+export function reassignTerminalWindow(terminalId: string, newWindowId: number): void {
+  terminalOwners.set(terminalId, newWindowId)
+}
 
 function createTerminal(
   id: string,
@@ -32,15 +112,16 @@ function createTerminal(
   cols: number,
   rows: number,
   env: Record<string, string>,
-  mainWindow: BrowserWindow,
+  ownerWindowId: number,
 ): void {
-  // Strip npm/node env vars injected by electron-vite so they don't leak
+  // Use the resolved shell environment (full PATH from login shell) and
+  // strip npm/node env vars injected by electron-vite so they don't leak
   // into user shells (e.g. npm_config_prefix conflicts with nvm)
   const cleanEnv = Object.fromEntries(
-    Object.entries(process.env).filter(
+    Object.entries(getShellEnv()).filter(
       ([key]) => !key.startsWith('npm_') && !key.startsWith('ELECTRON_'),
     ),
-  ) as Record<string, string>
+  )
 
   const ptyProcess = ptySpawn(shell, [], {
     name: 'xterm-256color',
@@ -52,6 +133,7 @@ function createTerminal(
 
   terminals.set(id, ptyProcess)
   terminalPids.set(id, ptyProcess.pid)
+  terminalOwners.set(id, ownerWindowId)
 
   // Buffer PTY output and flush at ~60fps to avoid hammering IPC on fast output
   let dataBuffer = ''
@@ -62,12 +144,28 @@ function createTerminal(
     const logger = getOrCreateLogger(id)
     logger.append(data)
 
+    // If this terminal is being transferred, buffer instead of forwarding
+    const transferState = transferStates.get(id)
+    if (transferState) {
+      const chunk = Buffer.from(data)
+      transferState.buffer.push(chunk)
+      transferState.bufferSize += chunk.length
+      // Evict oldest chunks if over cap
+      while (transferState.bufferSize > MAX_TRANSFER_BUFFER && transferState.buffer.length > 1) {
+        transferState.bufferSize -= transferState.buffer.shift()!.length
+      }
+      return
+    }
+
     dataBuffer += data
     if (!flushTimer) {
       flushTimer = setTimeout(() => {
         flushTimer = null
-        if (dataBuffer && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send(TERMINAL_DATA, id, dataBuffer)
+        if (dataBuffer) {
+          const windowId = terminalOwners.get(id)
+          if (windowId != null) {
+            sendToWindow(windowId, TERMINAL_DATA, id, dataBuffer)
+          }
         }
         dataBuffer = ''
       }, 16)
@@ -75,10 +173,12 @@ function createTerminal(
   })
 
   ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
+    const windowId = terminalOwners.get(id)
     terminals.delete(id)
     terminalPids.delete(id)
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(TERMINAL_EXIT, id, exitCode)
+    terminalOwners.delete(id)
+    if (windowId != null) {
+      sendToWindow(windowId, TERMINAL_EXIT, id, exitCode)
     }
   })
 }
@@ -107,6 +207,7 @@ function killTerminal(id: string): void {
     pty.kill()
     terminals.delete(id)
     terminalPids.delete(id)
+    terminalOwners.delete(id)
   }
 }
 
@@ -114,17 +215,19 @@ function getTerminalPid(id: string): number | undefined {
   return terminalPids.get(id)
 }
 
-export function registerHandlers(mainWindow: BrowserWindow): void {
+export function registerHandlers(): void {
   ipcMain.handle(
     TERMINAL_CREATE,
     async (
-      _event,
+      event,
       options: { cols: number; rows: number; cwd?: string; shell?: string },
     ): Promise<string> => {
       const id = `terminal-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
       const shell = options.shell || process.env.SHELL || '/bin/zsh'
       const cwd = options.cwd || os.homedir()
-      createTerminal(id, shell, cwd, options.cols, options.rows, {}, mainWindow)
+      const win = windowFromEvent(event)
+      const windowId = win?.id ?? -1
+      createTerminal(id, shell, cwd, options.cols, options.rows, {}, windowId)
       return id
     },
   )

@@ -3,7 +3,7 @@
 // Manages spawning, stopping, and testing MCP server child processes
 // =============================================================================
 
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
 import {
   MCP_SPAWN,
@@ -11,24 +11,24 @@ import {
   MCP_TEST,
   MCP_STATUS_UPDATE,
 } from '../../shared/ipc-channels'
+import { sendToWindow, windowFromEvent } from '../windowRegistry'
+import { getShellEnv } from '../shellEnv'
 
-// Map from server name to its running child process
-const runningServers: Map<string, ChildProcess> = new Map()
+// Map from server name to its running child process + owning window
+const runningServers: Map<string, { process: ChildProcess; ownerWindowId: number }> = new Map()
 
 function sendStatusUpdate(
-  mainWindow: BrowserWindow,
+  ownerWindowId: number,
   update: { name: string; status: string; error?: string },
 ): void {
-  if (!mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(MCP_STATUS_UPDATE, update)
-  }
+  sendToWindow(ownerWindowId, MCP_STATUS_UPDATE, update)
 }
 
-export function registerHandlers(mainWindow: BrowserWindow): void {
+export function registerHandlers(): void {
   ipcMain.handle(
     MCP_SPAWN,
     async (
-      _event,
+      event,
       name: string,
       command: string,
       args: string[],
@@ -37,36 +37,43 @@ export function registerHandlers(mainWindow: BrowserWindow): void {
       // Kill any existing process with the same name before spawning a new one
       const existing = runningServers.get(name)
       if (existing) {
-        existing.kill('SIGTERM')
+        existing.process.kill('SIGTERM')
         runningServers.delete(name)
       }
 
+      const win = windowFromEvent(event)
+      const ownerWindowId = win?.id ?? -1
+
       const child = spawn(command, args, {
-        env: { ...process.env, ...env },
+        env: { ...getShellEnv(), ...env },
         stdio: ['pipe', 'pipe', 'pipe'],
       })
 
-      runningServers.set(name, child)
-      sendStatusUpdate(mainWindow, { name, status: 'running' })
+      runningServers.set(name, { process: child, ownerWindowId })
+      sendStatusUpdate(ownerWindowId, { name, status: 'running' })
 
       child.on('close', () => {
+        const entry = runningServers.get(name)
+        const windowId = entry?.ownerWindowId ?? ownerWindowId
         runningServers.delete(name)
-        sendStatusUpdate(mainWindow, { name, status: 'stopped' })
+        sendStatusUpdate(windowId, { name, status: 'stopped' })
       })
 
       child.on('error', (err: Error) => {
+        const entry = runningServers.get(name)
+        const windowId = entry?.ownerWindowId ?? ownerWindowId
         runningServers.delete(name)
-        sendStatusUpdate(mainWindow, { name, status: 'error', error: err.message })
+        sendStatusUpdate(windowId, { name, status: 'error', error: err.message })
       })
     },
   )
 
   ipcMain.handle(MCP_STOP, async (_event, name: string) => {
-    const child = runningServers.get(name)
-    if (!child) {
+    const entry = runningServers.get(name)
+    if (!entry) {
       throw new Error(`No running MCP server found with name: ${name}`)
     }
-    child.kill('SIGTERM')
+    entry.process.kill('SIGTERM')
     // The 'close' event handler will remove it from the map and push a status update
   })
 
@@ -82,7 +89,7 @@ export function registerHandlers(mainWindow: BrowserWindow): void {
         let settled = false
 
         const child = spawn(command, args, {
-          env: { ...process.env, ...env },
+          env: { ...getShellEnv(), ...env },
           stdio: ['pipe', 'pipe', 'pipe'],
         })
 

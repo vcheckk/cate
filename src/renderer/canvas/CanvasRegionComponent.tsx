@@ -1,7 +1,7 @@
 import React, { useCallback, useRef, useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import type { CanvasRegion } from '../../shared/types'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreContext, useCanvasStoreApi } from '../stores/CanvasStoreContext'
 
 // Preset region colors
 const REGION_COLORS = [
@@ -36,7 +36,8 @@ const HANDLE_CURSORS: Record<ResizeHandle, string> = {
 }
 
 const CanvasRegionComponent: React.FC<Props> = ({ region, zoomLevel }) => {
-  const isSelected = useCanvasStore((s) => s.selectedRegionIds.has(region.id))
+  const canvasApi = useCanvasStoreApi()
+  const isSelected = useCanvasStoreContext((s) => s.selectedRegionIds.has(region.id))
   const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number; lastClientX: number; lastClientY: number } | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [isEditing, setIsEditing] = useState(false)
@@ -76,13 +77,13 @@ const CanvasRegionComponent: React.FC<Props> = ({ region, zoomLevel }) => {
 
     // Shift-click: toggle selection
     if (e.shiftKey) {
-      useCanvasStore.getState().toggleRegionSelection(region.id)
+      canvasApi.getState().toggleRegionSelection(region.id)
       return
     }
 
     // Select this region if not already selected
-    if (!useCanvasStore.getState().selectedRegionIds.has(region.id)) {
-      useCanvasStore.getState().selectRegions([region.id])
+    if (!canvasApi.getState().selectedRegionIds.has(region.id)) {
+      canvasApi.getState().selectRegions([region.id])
     }
 
     // Start drag
@@ -97,9 +98,9 @@ const CanvasRegionComponent: React.FC<Props> = ({ region, zoomLevel }) => {
 
     const handleMouseMove = (ev: MouseEvent) => {
       if (!dragRef.current) return
-      const zoom = useCanvasStore.getState().zoomLevel
+      const zoom = canvasApi.getState().zoomLevel
 
-      const state = useCanvasStore.getState()
+      const state = canvasApi.getState()
 
       // Determine if this is truly a multi-drag (more than just this region + its children)
       const hasOtherRegions = state.selectedRegionIds.size > 1
@@ -126,14 +127,14 @@ const CanvasRegionComponent: React.FC<Props> = ({ region, zoomLevel }) => {
         }
         // Move all selected regions (without cascading to children — they're already moved above)
         for (const rid of state.selectedRegionIds) {
-          const r = useCanvasStore.getState().regions[rid]
-          if (r) useCanvasStore.getState().resizeRegion(rid, r.size, { x: r.origin.x + incrDx, y: r.origin.y + incrDy })
+          const r = canvasApi.getState().regions[rid]
+          if (r) canvasApi.getState().resizeRegion(rid, r.size, { x: r.origin.x + incrDx, y: r.origin.y + incrDy })
         }
       } else {
         // Single-region drag: use moveRegion which cascades to contained nodes
         const totalDx = (ev.clientX - dragRef.current.startX) / zoom
         const totalDy = (ev.clientY - dragRef.current.startY) / zoom
-        useCanvasStore.getState().moveRegion(region.id, {
+        canvasApi.getState().moveRegion(region.id, {
           x: dragRef.current.originX + totalDx,
           y: dragRef.current.originY + totalDy,
         })
@@ -158,7 +159,7 @@ const CanvasRegionComponent: React.FC<Props> = ({ region, zoomLevel }) => {
 
   const handleRenameSubmit = useCallback(() => {
     if (editValue.trim()) {
-      useCanvasStore.getState().renameRegion(region.id, editValue.trim())
+      canvasApi.getState().renameRegion(region.id, editValue.trim())
     }
     setIsEditing(false)
   }, [region.id, editValue])
@@ -180,7 +181,7 @@ const CanvasRegionComponent: React.FC<Props> = ({ region, zoomLevel }) => {
     const startSize = { ...region.size }
 
     const handleMouseMove = (ev: MouseEvent) => {
-      const zoom = useCanvasStore.getState().zoomLevel
+      const zoom = canvasApi.getState().zoomLevel
       const dx = (ev.clientX - startX) / zoom
       const dy = (ev.clientY - startY) / zoom
 
@@ -207,7 +208,7 @@ const CanvasRegionComponent: React.FC<Props> = ({ region, zoomLevel }) => {
         if (h.includes('top')) newY -= excess
       }
 
-      useCanvasStore.getState().resizeRegion(region.id, { width: newW, height: newH }, { x: newX, y: newY })
+      canvasApi.getState().resizeRegion(region.id, { width: newW, height: newH }, { x: newX, y: newY })
     }
 
     const handleMouseUp = () => {
@@ -380,7 +381,7 @@ const CanvasRegionComponent: React.FC<Props> = ({ region, zoomLevel }) => {
                     cursor: 'pointer',
                   }}
                   onClick={() => {
-                    useCanvasStore.getState().updateRegionColor(region.id, color)
+                    canvasApi.getState().updateRegionColor(region.id, color)
                     setContextMenu(null)
                     setShowColors(false)
                   }}
@@ -391,7 +392,7 @@ const CanvasRegionComponent: React.FC<Props> = ({ region, zoomLevel }) => {
           <div style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.1)', margin: '4px 0' }} />
           <button
             style={menuItemStyle}
-            onClick={() => { useCanvasStore.getState().dissolveRegion(region.id); setContextMenu(null) }}
+            onClick={() => { canvasApi.getState().dissolveRegion(region.id); setContextMenu(null) }}
             onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)')}
             onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
           >
@@ -399,7 +400,7 @@ const CanvasRegionComponent: React.FC<Props> = ({ region, zoomLevel }) => {
           </button>
           <button
             style={menuItemStyle}
-            onClick={() => { useCanvasStore.getState().removeRegion(region.id); setContextMenu(null) }}
+            onClick={() => { canvasApi.getState().removeRegion(region.id); setContextMenu(null) }}
             onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)')}
             onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
           >
@@ -408,8 +409,8 @@ const CanvasRegionComponent: React.FC<Props> = ({ region, zoomLevel }) => {
           <button
             style={{ ...menuItemStyle, color: 'rgba(255, 69, 58, 0.9)' }}
             onClick={() => {
-              useCanvasStore.getState().selectRegions([region.id])
-              useCanvasStore.getState().deleteSelection(true)
+              canvasApi.getState().selectRegions([region.id])
+              canvasApi.getState().deleteSelection(true)
               setContextMenu(null)
             }}
             onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)')}

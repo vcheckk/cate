@@ -63,6 +63,8 @@ import {
   LAYOUT_DELETE,
   SHELL_WHICH,
   FS_DELETE,
+  FS_RENAME,
+  FS_MKDIR,
   SHELL_SHOW_IN_FOLDER,
   HTTP_FETCH,
   MCP_SPAWN,
@@ -71,6 +73,31 @@ import {
   MCP_STATUS_UPDATE,
   NOTIFY_OS,
   NOTIFY_ACTION,
+  WINDOW_CREATE,
+  WINDOW_GET_ID,
+  WINDOW_GET_TYPE,
+  PANEL_TRANSFER,
+  PANEL_RECEIVE,
+  PANEL_TRANSFER_ACK,
+  PANEL_WINDOWS_LIST,
+  PANEL_WINDOW_DOCK_BACK,
+  DRAG_START,
+  DRAG_DETACH,
+  DRAG_END,
+  DOCK_WINDOW_INIT,
+  DOCK_WINDOW_SYNC_STATE,
+  DOCK_WINDOWS_LIST,
+  CROSS_WINDOW_DRAG_START,
+  CROSS_WINDOW_DRAG_UPDATE,
+  CROSS_WINDOW_DRAG_DROP,
+  CROSS_WINDOW_DRAG_CANCEL,
+  CROSS_WINDOW_DRAG_RESOLVE,
+  WORKSPACE_LIST,
+  WORKSPACE_CREATE,
+  WORKSPACE_UPDATE,
+  WORKSPACE_REMOVE,
+  WORKSPACE_GET,
+  WORKSPACE_CHANGED,
 } from '../shared/ipc-channels'
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -453,6 +480,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return ipcRenderer.invoke(FS_DELETE, filePath)
   },
 
+  fsRename(oldPath: string, newPath: string): Promise<void> {
+    return ipcRenderer.invoke(FS_RENAME, oldPath, newPath)
+  },
+
+  fsMkdir(dirPath: string): Promise<void> {
+    return ipcRenderer.invoke(FS_MKDIR, dirPath)
+  },
+
   shellShowInFolder(filePath: string): Promise<void> {
     return ipcRenderer.invoke(SHELL_SHOW_IN_FOLDER, filePath)
   },
@@ -499,6 +534,162 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
     ipcRenderer.on(NOTIFY_ACTION, listener)
     return () => { ipcRenderer.removeListener(NOTIFY_ACTION, listener) }
+  },
+
+  // ---------------------------------------------------------------------------
+  // Window management
+  // ---------------------------------------------------------------------------
+
+  windowCreate(params?: unknown): Promise<number> {
+    return ipcRenderer.invoke(WINDOW_CREATE, params)
+  },
+
+  windowGetId(): Promise<number | null> {
+    return ipcRenderer.invoke(WINDOW_GET_ID)
+  },
+
+  windowGetType(): Promise<string> {
+    return ipcRenderer.invoke(WINDOW_GET_TYPE)
+  },
+
+  // ---------------------------------------------------------------------------
+  // Panel transfer (cross-window)
+  // ---------------------------------------------------------------------------
+
+  panelTransfer(snapshot: unknown, targetWindowId?: number): Promise<number | void> {
+    return ipcRenderer.invoke(PANEL_TRANSFER, snapshot, targetWindowId)
+  },
+
+  panelTransferAck(ptyId?: string): Promise<void> {
+    return ipcRenderer.invoke(PANEL_TRANSFER_ACK, ptyId)
+  },
+
+  onPanelReceive(callback: (snapshot: unknown) => void): () => void {
+    const listener = (_event: Electron.IpcRendererEvent, snapshot: unknown): void => {
+      callback(snapshot)
+    }
+    ipcRenderer.on(PANEL_RECEIVE, listener)
+    return () => { ipcRenderer.removeListener(PANEL_RECEIVE, listener) }
+  },
+
+  panelWindowsList(): Promise<unknown[]> {
+    return ipcRenderer.invoke(PANEL_WINDOWS_LIST)
+  },
+
+  panelWindowDockBack(): Promise<void> {
+    return ipcRenderer.invoke(PANEL_WINDOW_DOCK_BACK)
+  },
+
+  onPanelWindowDockBack(callback: (panelWindowId: number) => void): () => void {
+    const listener = (_event: Electron.IpcRendererEvent, panelWindowId: number): void => {
+      callback(panelWindowId)
+    }
+    ipcRenderer.on(PANEL_WINDOW_DOCK_BACK, listener)
+    return () => { ipcRenderer.removeListener(PANEL_WINDOW_DOCK_BACK, listener) }
+  },
+
+  // ---------------------------------------------------------------------------
+  // Cross-window drag-and-drop
+  // ---------------------------------------------------------------------------
+
+  dragStart(snapshot: unknown): Promise<void> {
+    return ipcRenderer.invoke(DRAG_START, snapshot)
+  },
+
+  dragDetach(snapshot: unknown, workspaceId?: string): Promise<number> {
+    return ipcRenderer.invoke(DRAG_DETACH, snapshot, workspaceId)
+  },
+
+  onDragEnd(callback: () => void): () => void {
+    const listener = (): void => { callback() }
+    ipcRenderer.on(DRAG_END, listener)
+    return () => { ipcRenderer.removeListener(DRAG_END, listener) }
+  },
+
+  // ---------------------------------------------------------------------------
+  // Dock window management
+  // ---------------------------------------------------------------------------
+
+  onDockWindowInit(callback: (payload: unknown) => void): () => void {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+      callback(payload)
+    }
+    ipcRenderer.on(DOCK_WINDOW_INIT, listener)
+    return () => { ipcRenderer.removeListener(DOCK_WINDOW_INIT, listener) }
+  },
+
+  dockWindowSyncState(state: unknown): Promise<void> {
+    return ipcRenderer.invoke(DOCK_WINDOW_SYNC_STATE, state)
+  },
+
+  dockWindowsList(): Promise<unknown[]> {
+    return ipcRenderer.invoke(DOCK_WINDOWS_LIST)
+  },
+
+  // ---------------------------------------------------------------------------
+  // Cross-window drag coordination
+  // ---------------------------------------------------------------------------
+
+  crossWindowDragStart(snapshot: unknown, screenPos: unknown): Promise<void> {
+    return ipcRenderer.invoke(CROSS_WINDOW_DRAG_START, snapshot, screenPos)
+  },
+
+  onCrossWindowDragUpdate(callback: (screenPos: unknown, snapshot: unknown) => void): () => void {
+    const listener = (_event: Electron.IpcRendererEvent, screenPos: unknown, snapshot: unknown): void => {
+      callback(screenPos, snapshot)
+    }
+    ipcRenderer.on(CROSS_WINDOW_DRAG_UPDATE, listener)
+    return () => { ipcRenderer.removeListener(CROSS_WINDOW_DRAG_UPDATE, listener) }
+  },
+
+  crossWindowDragDrop(panelId: string): Promise<void> {
+    return ipcRenderer.invoke(CROSS_WINDOW_DRAG_DROP, panelId)
+  },
+
+  crossWindowDragCancel(): Promise<void> {
+    return ipcRenderer.invoke(CROSS_WINDOW_DRAG_CANCEL)
+  },
+
+  crossWindowDragResolve(): Promise<{ claimed: boolean }> {
+    return ipcRenderer.invoke(CROSS_WINDOW_DRAG_RESOLVE)
+  },
+
+  // ---------------------------------------------------------------------------
+  // Workspace management (main process is source of truth)
+  // ---------------------------------------------------------------------------
+
+  workspaceList(): Promise<unknown[]> {
+    return ipcRenderer.invoke(WORKSPACE_LIST)
+  },
+
+  workspaceCreate(options?: { name?: string; rootPath?: string; id?: string }): Promise<unknown> {
+    return ipcRenderer.invoke(WORKSPACE_CREATE, options)
+  },
+
+  workspaceUpdate(id: string, changes: Record<string, unknown>): Promise<unknown> {
+    return ipcRenderer.invoke(WORKSPACE_UPDATE, id, changes)
+  },
+
+  workspaceRemove(id: string): Promise<boolean> {
+    return ipcRenderer.invoke(WORKSPACE_REMOVE, id)
+  },
+
+  workspaceGet(id: string): Promise<unknown> {
+    return ipcRenderer.invoke(WORKSPACE_GET, id)
+  },
+
+  onWorkspaceChanged(callback: (workspaces: unknown[], originWindowId: number | null) => void): () => void {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      workspaces: unknown[],
+      originWindowId: number | null,
+    ): void => {
+      callback(workspaces, originWindowId)
+    }
+    ipcRenderer.on(WORKSPACE_CHANGED, listener)
+    return () => {
+      ipcRenderer.removeListener(WORKSPACE_CHANGED, listener)
+    }
   },
 
   // ---------------------------------------------------------------------------

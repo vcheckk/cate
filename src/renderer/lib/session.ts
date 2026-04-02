@@ -3,14 +3,18 @@
 // Ported from SessionSnapshot.swift + SessionStore.swift
 // =============================================================================
 
-import { useAppStore } from '../stores/appStore'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useAppStore, getCanvasOperations } from '../stores/appStore'
+import type { StoreApi } from 'zustand'
+import type { CanvasStore } from '../stores/canvasStore'
 import type {
   SessionSnapshot,
   NodeSnapshot,
   MultiWorkspaceSession,
+  PanelWindowSnapshot,
+  DetachedDockWindowSnapshot,
   PanelType,
 } from '../../shared/types'
+import { useDockStore } from '../stores/dockStore'
 import { terminalRegistry } from './terminalRegistry'
 
 // -----------------------------------------------------------------------------
@@ -29,15 +33,18 @@ export const deferredSnapshots = new Map<string, SessionSnapshot>()
 
 export async function saveSession(): Promise<void> {
   const appState = useAppStore.getState()
-  const canvasState = useCanvasStore.getState()
 
   // Sync current canvas state back to the selected workspace before saving
+  // After this call, workspace.canvasNodes/regions/zoom/viewport are up to date
   appState.syncCanvasToWorkspace(appState.selectedWorkspaceId)
+
+  // Re-read app state after sync (syncCanvasToWorkspace updates workspace data)
+  const updatedState = useAppStore.getState()
 
   const snapshots: SessionSnapshot[] = []
 
   // Skip ephemeral workspaces (no panels, no rootPath, and not deferred)
-  const persistableWorkspaces = appState.workspaces.filter(
+  const persistableWorkspaces = updatedState.workspaces.filter(
     (ws) => Object.keys(ws.panels).length > 0 || ws.rootPath || deferredSnapshots.has(ws.id),
   )
 
@@ -50,11 +57,10 @@ export async function saveSession(): Promise<void> {
       continue
     }
 
-    // For the selected workspace, use canvasStore (most current state)
-    // For others, use the workspace's stored canvasNodes
-    const isSelected = workspace.id === appState.selectedWorkspaceId
-    const nodes = isSelected ? canvasState.nodes : workspace.canvasNodes
-    const regions = isSelected ? canvasState.regions : workspace.regions
+    const isSelected = workspace.id === updatedState.selectedWorkspaceId
+    // After syncCanvasToWorkspace, workspace data is always up to date
+    const nodes = workspace.canvasNodes
+    const regions = workspace.regions
 
     const nodeSnapshots: NodeSnapshot[] = Object.values(nodes).map((node) => {
       const panel = workspace.panels[node.panelId]
@@ -94,23 +100,58 @@ export async function saveSession(): Promise<void> {
       }
     }
 
+    // Capture dock state — live from the dock store for the selected workspace,
+    // or from the workspace's last-saved dockState for inactive workspaces.
+    const dockSnapshot = isSelected
+      ? useDockStore.getState().getSnapshot()
+      : workspace.dockState ?? undefined
+
     snapshots.push({
       workspaceId: workspace.id,
       workspaceName: workspace.name,
       rootPath: workspace.rootPath || null,
-      zoomLevel: isSelected ? canvasState.zoomLevel : workspace.zoomLevel,
-      viewportOffset: isSelected ? canvasState.viewportOffset : workspace.viewportOffset,
+      zoomLevel: workspace.zoomLevel,
+      viewportOffset: workspace.viewportOffset,
       nodes: nodeSnapshots,
       regions: Object.keys(regions).length > 0 ? { ...regions } : undefined,
+      dockState: dockSnapshot,
     })
   }
 
   const selectedIndex = persistableWorkspaces.findIndex((w) => w.id === appState.selectedWorkspaceId)
 
+  // Capture panel window snapshots from main process
+  let panelWindows: PanelWindowSnapshot[] | undefined
+  try {
+    const pwList = await window.electronAPI.panelWindowsList()
+    if (pwList && pwList.length > 0) {
+      panelWindows = pwList.map((pw) => ({
+        panel: pw.panel,
+        bounds: pw.bounds,
+        workspaceId: pw.workspaceId,
+      }))
+    }
+  } catch {
+    // Panel window listing not available — skip
+  }
+
+  // Capture dock window snapshots from main process
+  let dockWindows: DetachedDockWindowSnapshot[] | undefined
+  try {
+    const dwList = await window.electronAPI.dockWindowsList()
+    if (dwList && dwList.length > 0) {
+      dockWindows = dwList
+    }
+  } catch {
+    // Dock window listing not available — skip
+  }
+
   const session: MultiWorkspaceSession = {
     version: 2,
     selectedWorkspaceIndex: selectedIndex >= 0 ? selectedIndex : null,
     workspaces: snapshots,
+    panelWindows,
+    dockWindows,
   }
 
   try {
@@ -143,14 +184,16 @@ export async function loadSession(): Promise<MultiWorkspaceSession | SessionSnap
 // Restore
 // -----------------------------------------------------------------------------
 
-export async function restoreSession(snapshot: SessionSnapshot): Promise<void> {
+export async function restoreSession(snapshot: SessionSnapshot, canvasStoreApi?: StoreApi<CanvasStore>): Promise<void> {
   if (!snapshot?.nodes) {
     console.warn('[session] invalid snapshot (no nodes), skipping restore')
     return
   }
 
   const appStore = useAppStore.getState()
-  const canvasStore = useCanvasStore.getState()
+
+  // Get canvas store state — either from explicit parameter or via canvasOps
+  const getCanvasState = () => canvasStoreApi?.getState() ?? null
 
   const wsId = appStore.selectedWorkspaceId
   console.debug(`[session] restoring workspace ${wsId}: ${snapshot.nodes.length} nodes`)
@@ -158,9 +201,10 @@ export async function restoreSession(snapshot: SessionSnapshot): Promise<void> {
 
   // Restore regions first and build old→new ID mapping
   const regionIdMap = new Map<string, string>()
-  if (snapshot.regions) {
+  const cs = getCanvasState()
+  if (snapshot.regions && cs) {
     for (const region of Object.values(snapshot.regions)) {
-      const newId = canvasStore.addRegion(region.label, region.origin, region.size, region.color)
+      const newId = cs.addRegion(region.label, region.origin, region.size, region.color)
       regionIdMap.set(region.id, newId)
     }
   }
@@ -174,20 +218,19 @@ export async function restoreSession(snapshot: SessionSnapshot): Promise<void> {
     switch (nodeSnap.panelType) {
       case 'terminal': {
         const panelId = appStore.createTerminal(wsId, undefined, position)
-        // Store restore metadata so the registry can pick up cwd and replay log
         terminalRestoreData.set(panelId, {
           cwd: nodeSnap.workingDirectory ?? undefined,
           replayFromId: nodeSnap.panelId,
         })
-        // Update position/size for the newly created node
-        const newNodeId = canvasStore.nodeForPanel(panelId)
-        if (newNodeId) {
-          canvasStore.moveNode(newNodeId, position)
-          canvasStore.resizeNode(newNodeId, size)
-          if (nodeSnap.regionId) {
-            const mappedRegionId = regionIdMap.get(nodeSnap.regionId)
-            if (mappedRegionId) {
-              canvasStore.setNodeRegion(newNodeId, mappedRegionId)
+        const canvasState = getCanvasState()
+        if (canvasState) {
+          const newNodeId = canvasState.nodeForPanel(panelId)
+          if (newNodeId) {
+            canvasState.moveNode(newNodeId, position)
+            canvasState.resizeNode(newNodeId, size)
+            if (nodeSnap.regionId) {
+              const mappedRegionId = regionIdMap.get(nodeSnap.regionId)
+              if (mappedRegionId) canvasState.setNodeRegion(newNodeId, mappedRegionId)
             }
           }
         }
@@ -195,14 +238,15 @@ export async function restoreSession(snapshot: SessionSnapshot): Promise<void> {
       }
       case 'editor': {
         const panelId = appStore.createEditor(wsId, nodeSnap.filePath ?? undefined)
-        const newNodeId = canvasStore.nodeForPanel(panelId)
-        if (newNodeId) {
-          canvasStore.moveNode(newNodeId, position)
-          canvasStore.resizeNode(newNodeId, size)
-          if (nodeSnap.regionId) {
-            const mappedRegionId = regionIdMap.get(nodeSnap.regionId)
-            if (mappedRegionId) {
-              canvasStore.setNodeRegion(newNodeId, mappedRegionId)
+        const canvasState = getCanvasState()
+        if (canvasState) {
+          const newNodeId = canvasState.nodeForPanel(panelId)
+          if (newNodeId) {
+            canvasState.moveNode(newNodeId, position)
+            canvasState.resizeNode(newNodeId, size)
+            if (nodeSnap.regionId) {
+              const mappedRegionId = regionIdMap.get(nodeSnap.regionId)
+              if (mappedRegionId) canvasState.setNodeRegion(newNodeId, mappedRegionId)
             }
           }
         }
@@ -210,14 +254,15 @@ export async function restoreSession(snapshot: SessionSnapshot): Promise<void> {
       }
       case 'browser': {
         const panelId = appStore.createBrowser(wsId, nodeSnap.url ?? undefined)
-        const newNodeId = canvasStore.nodeForPanel(panelId)
-        if (newNodeId) {
-          canvasStore.moveNode(newNodeId, position)
-          canvasStore.resizeNode(newNodeId, size)
-          if (nodeSnap.regionId) {
-            const mappedRegionId = regionIdMap.get(nodeSnap.regionId)
-            if (mappedRegionId) {
-              canvasStore.setNodeRegion(newNodeId, mappedRegionId)
+        const canvasState = getCanvasState()
+        if (canvasState) {
+          const newNodeId = canvasState.nodeForPanel(panelId)
+          if (newNodeId) {
+            canvasState.moveNode(newNodeId, position)
+            canvasState.resizeNode(newNodeId, size)
+            if (nodeSnap.regionId) {
+              const mappedRegionId = regionIdMap.get(nodeSnap.regionId)
+              if (mappedRegionId) canvasState.setNodeRegion(newNodeId, mappedRegionId)
             }
           }
         }
@@ -226,24 +271,37 @@ export async function restoreSession(snapshot: SessionSnapshot): Promise<void> {
     }
   }
 
-  canvasStore.setZoom(snapshot.zoomLevel)
-  canvasStore.setViewportOffset(snapshot.viewportOffset)
+  const canvasState = getCanvasState()
+  if (canvasState) {
+    canvasState.setZoom(snapshot.zoomLevel)
+    canvasState.setViewportOffset(snapshot.viewportOffset)
 
-  // Auto-assign regionId for migrated workspaces (nodes without regionId)
-  const finalState = useCanvasStore.getState()
-  const allRegions = Object.values(finalState.regions)
-  for (const node of Object.values(finalState.nodes)) {
-    if (!node.regionId && allRegions.length > 0) {
-      for (const region of allRegions) {
-        const overlapX = Math.max(0, Math.min(node.origin.x + node.size.width, region.origin.x + region.size.width) - Math.max(node.origin.x, region.origin.x))
-        const overlapY = Math.max(0, Math.min(node.origin.y + node.size.height, region.origin.y + region.size.height) - Math.max(node.origin.y, region.origin.y))
-        const overlapArea = overlapX * overlapY
-        const nodeArea = node.size.width * node.size.height
-        if (nodeArea > 0 && overlapArea / nodeArea > 0.5) {
-          canvasStore.setNodeRegion(node.id, region.id)
-          break
+    // Auto-assign regionId for migrated workspaces (nodes without regionId)
+    const finalState = getCanvasState()!
+    const allRegions = Object.values(finalState.regions)
+    for (const node of Object.values(finalState.nodes)) {
+      if (!node.regionId && allRegions.length > 0) {
+        for (const region of allRegions) {
+          const overlapX = Math.max(0, Math.min(node.origin.x + node.size.width, region.origin.x + region.size.width) - Math.max(node.origin.x, region.origin.x))
+          const overlapY = Math.max(0, Math.min(node.origin.y + node.size.height, region.origin.y + region.size.height) - Math.max(node.origin.y, region.origin.y))
+          const overlapArea = overlapX * overlapY
+          const nodeArea = node.size.width * node.size.height
+          if (nodeArea > 0 && overlapArea / nodeArea > 0.5) {
+            canvasState.setNodeRegion(node.id, region.id)
+            break
+          }
         }
       }
+    }
+  }
+
+  // Restore dock state if present
+  if (snapshot.dockState) {
+    try {
+      useDockStore.getState().restoreSnapshot(snapshot.dockState)
+      console.debug(`[session] dock state restored for workspace ${wsId}`)
+    } catch (err) {
+      console.warn('[session] failed to restore dock state:', err)
     }
   }
 
@@ -285,7 +343,7 @@ export async function replayTerminalLog(panelId: string): Promise<void> {
 // Restore — multi-workspace
 // -----------------------------------------------------------------------------
 
-export async function restoreMultiWorkspaceSession(session: MultiWorkspaceSession): Promise<void> {
+export async function restoreMultiWorkspaceSession(session: MultiWorkspaceSession, canvasStoreApi?: StoreApi<CanvasStore>): Promise<void> {
   const appStore = useAppStore.getState()
   const tTotal = performance.now()
   console.debug(`[session] restoring multi-workspace session: ${session.workspaces.length} workspaces`)
@@ -309,7 +367,7 @@ export async function restoreMultiWorkspaceSession(session: MultiWorkspaceSessio
     if (i === selectedIdx) {
       // Select and fully restore the active workspace
       appStore.selectWorkspace(wsId)
-      await restoreSession(snapshot)
+      await restoreSession(snapshot, canvasStoreApi)
     } else {
       // Defer restoration — store the snapshot for lazy loading on first switch
       deferredSnapshots.set(wsId, snapshot)
@@ -321,6 +379,60 @@ export async function restoreMultiWorkspaceSession(session: MultiWorkspaceSessio
     appStore.selectWorkspace(wsIds[selectedIdx])
   }
 
+  // Recreate panel windows that were open at the time of last save
+  if (session.panelWindows && session.panelWindows.length > 0) {
+    console.debug(`[session] restoring ${session.panelWindows.length} panel windows`)
+    for (const pw of session.panelWindows) {
+      try {
+        const snapshot: import('../../shared/types').PanelTransferSnapshot = {
+          panel: pw.panel,
+          geometry: {
+            origin: { x: pw.bounds.x, y: pw.bounds.y },
+            size: { width: pw.bounds.width, height: pw.bounds.height },
+          },
+          sourceLocation: { type: 'canvas', canvasId: '', canvasNodeId: '' },
+        }
+        const newWindowId = await window.electronAPI.panelTransfer(snapshot)
+        if (typeof newWindowId === 'number') {
+          // Position the new panel window to its saved bounds
+          // The main process createWindow positions it, but we passed geometry in the snapshot
+          console.debug(`[session] panel window restored: ${pw.panel.title} (windowId=${newWindowId})`)
+        }
+      } catch (err) {
+        console.warn(`[session] failed to restore panel window "${pw.panel.title}":`, err)
+      }
+    }
+  }
+
+  // Recreate dock windows that were open at the time of last save
+  if (session.dockWindows && session.dockWindows.length > 0) {
+    console.debug(`[session] restoring ${session.dockWindows.length} dock windows`)
+    for (const dw of session.dockWindows) {
+      try {
+        // For each panel in the dock window, create a transfer snapshot and create
+        // a dock window. The first panel creates the window; remaining panels get
+        // transferred to it.
+        const panelIds = Object.keys(dw.panels)
+        if (panelIds.length === 0) continue
+
+        const firstPanel = dw.panels[panelIds[0]]
+        const snapshot: import('../../shared/types').PanelTransferSnapshot = {
+          panel: firstPanel,
+          geometry: {
+            origin: { x: dw.bounds.x, y: dw.bounds.y },
+            size: { width: dw.bounds.width, height: dw.bounds.height },
+          },
+          sourceLocation: { type: 'detached', windowId: -1 },
+        }
+
+        await window.electronAPI.dragDetach(snapshot, dw.workspaceId)
+        console.debug(`[session] dock window restored: ${panelIds.length} panels`)
+      } catch (err) {
+        console.warn(`[session] failed to restore dock window:`, err)
+      }
+    }
+  }
+
   console.debug(`[session] full session restored in ${(performance.now() - tTotal).toFixed(1)}ms`)
 }
 
@@ -328,11 +440,11 @@ export async function restoreMultiWorkspaceSession(session: MultiWorkspaceSessio
 // Restore a deferred workspace — called on first switch to an inactive workspace
 // -----------------------------------------------------------------------------
 
-export async function restoreDeferredWorkspace(workspaceId: string): Promise<void> {
+export async function restoreDeferredWorkspace(workspaceId: string, canvasStoreApi?: StoreApi<CanvasStore>): Promise<void> {
   const snapshot = deferredSnapshots.get(workspaceId)
   if (!snapshot) return
   deferredSnapshots.delete(workspaceId)
-  await restoreSession(snapshot)
+  await restoreSession(snapshot, canvasStoreApi)
 }
 
 // -----------------------------------------------------------------------------
@@ -342,18 +454,25 @@ export async function restoreDeferredWorkspace(workspaceId: string): Promise<voi
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
 let autoSaveSetUp = false
 
-export function setupAutoSave(): () => void {
+export function setupAutoSave(canvasStoreApi?: StoreApi<CanvasStore>): () => void {
   if (autoSaveSetUp) {
     return () => {}
   }
   autoSaveSetUp = true
 
-  const unsubCanvas = useCanvasStore.subscribe(() => {
+  const unsubCanvas = canvasStoreApi
+    ? canvasStoreApi.subscribe(() => {
+        if (autoSaveTimer) clearTimeout(autoSaveTimer)
+        autoSaveTimer = setTimeout(() => saveSession(), 5000)
+      })
+    : () => {}
+
+  const unsubApp = useAppStore.subscribe(() => {
     if (autoSaveTimer) clearTimeout(autoSaveTimer)
     autoSaveTimer = setTimeout(() => saveSession(), 5000)
   })
 
-  const unsubApp = useAppStore.subscribe(() => {
+  const unsubDock = useDockStore.subscribe(() => {
     if (autoSaveTimer) clearTimeout(autoSaveTimer)
     autoSaveTimer = setTimeout(() => saveSession(), 5000)
   })
@@ -361,6 +480,7 @@ export function setupAutoSave(): () => void {
   return () => {
     unsubCanvas()
     unsubApp()
+    unsubDock()
     if (autoSaveTimer) clearTimeout(autoSaveTimer)
     autoSaveSetUp = false
   }

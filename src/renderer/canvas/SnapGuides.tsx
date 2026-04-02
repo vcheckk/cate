@@ -1,8 +1,8 @@
 import React from 'react'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreContext } from '../stores/CanvasStoreContext'
 
 const SnapGuides: React.FC = () => {
-  const guides = useCanvasStore((s) => s.snapGuides)
+  const guides = useCanvasStoreContext((s) => s.snapGuides)
   if (guides.lines.length === 0) return null
 
   const color = 'rgba(74, 158, 255, 0.7)'

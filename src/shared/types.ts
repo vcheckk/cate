@@ -26,7 +26,7 @@ export interface Rect {
 // Panel types
 // -----------------------------------------------------------------------------
 
-export type PanelType = 'terminal' | 'browser' | 'editor' | 'git' | 'fileExplorer' | 'projectList'
+export type PanelType = 'terminal' | 'browser' | 'editor' | 'git' | 'fileExplorer' | 'projectList' | 'canvas'
 
 // -----------------------------------------------------------------------------
 // AI Tool Configuration
@@ -151,7 +151,146 @@ export interface PanelState {
 }
 
 // -----------------------------------------------------------------------------
-// Workspace state
+// Workspace metadata — shared across windows, managed by main process
+// -----------------------------------------------------------------------------
+
+export interface WorkspaceInfo {
+  id: string
+  name: string
+  color: string
+  rootPath: string
+}
+
+// -----------------------------------------------------------------------------
+// Window type system — main window vs borderless panel windows (Phase 4)
+// -----------------------------------------------------------------------------
+
+export type CateWindowType = 'main' | 'panel' | 'dock'
+
+export interface CateWindowParams {
+  type: CateWindowType
+  /** For panel windows: the panel type being displayed */
+  panelType?: PanelType
+  /** For panel windows: the panel ID */
+  panelId?: string
+  /** For panel/dock windows: workspace context */
+  workspaceId?: string
+}
+
+/** Payload sent to a dock window after creation to initialize its dock state */
+export interface DockWindowInitPayload {
+  panels: Record<string, PanelState>
+  dockState: WindowDockState
+  workspaceId: string
+}
+
+/** Snapshot of a detached dock window for session persistence */
+export interface DetachedDockWindowSnapshot {
+  dockState: DockStateSnapshot
+  panels: Record<string, PanelState>
+  bounds: { x: number; y: number; width: number; height: number }
+  workspaceId: string
+}
+
+// -----------------------------------------------------------------------------
+// Panel transfer protocol — cross-window panel migration (Phase 4)
+// -----------------------------------------------------------------------------
+
+export interface PanelTransferSnapshot {
+  panel: PanelState
+  geometry: { origin: Point; size: Size }
+  sourceLocation: PanelLocation
+
+  // Terminal-specific
+  terminalPtyId?: string
+  terminalScrollback?: string
+
+  // Editor-specific
+  editorState?: {
+    cursorPosition: { line: number; column: number }
+    scrollTop: number
+    unsavedContent?: string
+  }
+
+  // Browser-specific
+  browserState?: {
+    url: string
+    canGoBack: boolean
+    canGoForward: boolean
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Dock zone types — VS Code-style panel docking (Phase 2)
+// -----------------------------------------------------------------------------
+
+export type DockZonePosition = 'left' | 'right' | 'bottom' | 'center'
+
+/** Side zones only (excludes center) — for visibility toggling and sizing */
+export const SIDE_ZONES: DockZonePosition[] = ['left', 'right', 'bottom']
+/** All dock zones including center */
+export const ALL_ZONES: DockZonePosition[] = ['left', 'right', 'bottom', 'center']
+
+/** Recursive layout tree node for dock zones */
+export type DockLayoutNode = DockSplitNode | DockTabStack
+
+export interface DockSplitNode {
+  type: 'split'
+  id: string
+  direction: 'horizontal' | 'vertical'
+  children: DockLayoutNode[]
+  ratios: number[] // proportional sizes, sum = 1.0
+}
+
+export interface DockTabStack {
+  type: 'tabs'
+  id: string
+  panelIds: string[]
+  activeIndex: number
+}
+
+export interface DockZoneState {
+  position: DockZonePosition
+  visible: boolean
+  size: number // width (left/right) or height (bottom) in pixels
+  layout: DockLayoutNode | null // null = empty/collapsed
+}
+
+export interface WindowDockState {
+  left: DockZoneState
+  right: DockZoneState
+  bottom: DockZoneState
+  center: DockZoneState
+}
+
+/** Where a panel lives — determines how/where it renders */
+export type PanelLocation =
+  | { type: 'canvas'; canvasId: string; canvasNodeId: string }
+  | { type: 'dock'; zone: DockZonePosition; stackId: string }
+  | { type: 'detached'; windowId: number }
+
+/** Drop target for dock drag-and-drop */
+export type DockDropTarget =
+  | { type: 'split'; stackId: string; edge: 'top' | 'bottom' | 'left' | 'right' }
+  | { type: 'tab'; stackId: string; index?: number }
+  | { type: 'newWindow'; screenPosition: Point }
+  | { type: 'zone'; zone: DockZonePosition }
+
+// -----------------------------------------------------------------------------
+// Canvas state snapshot — used for multi-canvas support (Phase 2+)
+// -----------------------------------------------------------------------------
+
+export interface CanvasSnapshot {
+  id: string
+  canvasNodes: Record<CanvasNodeId, CanvasNodeState>
+  regions: Record<string, CanvasRegion>
+  zoomLevel: number
+  viewportOffset: Point
+  focusedNodeId: CanvasNodeId | null
+}
+
+// -----------------------------------------------------------------------------
+// Workspace state — full state including per-window canvas/panel data
 // -----------------------------------------------------------------------------
 
 export interface WorkspaceState {
@@ -160,11 +299,17 @@ export interface WorkspaceState {
   color: string
   rootPath: string
   panels: Record<string, PanelState>
+  // Primary canvas state (current behavior)
   canvasNodes: Record<CanvasNodeId, CanvasNodeState>
   regions: Record<string, CanvasRegion>
   zoomLevel: number
   viewportOffset: Point
   focusedNodeId: CanvasNodeId | null
+  // Dock layout state — saved/restored per workspace on switch
+  dockState?: { zones: WindowDockState; locations: Record<string, PanelLocation> }
+  // Multi-canvas support (Phase 2+ — unused for now)
+  canvases?: Record<string, CanvasSnapshot>
+  activeCanvasId?: string
 }
 
 // -----------------------------------------------------------------------------
@@ -384,12 +529,31 @@ export interface SessionSnapshot {
   zoomLevel: number
   nodes: NodeSnapshot[]
   regions?: Record<string, CanvasRegion>
+  /** Dock zone layout state — added in Phase 5. Missing = empty dock (migration). */
+  dockState?: DockStateSnapshot
+}
+
+/** Serialized dock zone state for session persistence. */
+export interface DockStateSnapshot {
+  zones: WindowDockState
+  locations: Record<string, PanelLocation>
+}
+
+/** Snapshot of a detached panel window for session persistence. */
+export interface PanelWindowSnapshot {
+  panel: PanelState
+  bounds: { x: number; y: number; width: number; height: number }
+  workspaceId?: string
 }
 
 export interface MultiWorkspaceSession {
   version: 2
   selectedWorkspaceIndex: number | null
   workspaces: SessionSnapshot[]
+  /** Detached panel windows — added in Phase 5. Missing = no panel windows (migration). */
+  panelWindows?: PanelWindowSnapshot[]
+  /** Detached dock windows with full dock layout. Missing = no dock windows (migration). */
+  dockWindows?: DetachedDockWindowSnapshot[]
 }
 
 // -----------------------------------------------------------------------------
@@ -512,6 +676,7 @@ export const PANEL_DEFAULT_SIZES: Record<PanelType, Size> = {
   git: { width: 500, height: 600 },
   fileExplorer: { width: 300, height: 500 },
   projectList: { width: 300, height: 400 },
+  canvas: { width: 800, height: 600 },
 }
 
 export const PANEL_MINIMUM_SIZES: Record<PanelType, Size> = {
@@ -521,6 +686,7 @@ export const PANEL_MINIMUM_SIZES: Record<PanelType, Size> = {
   git: { width: 350, height: 300 },
   fileExplorer: { width: 180, height: 200 },
   projectList: { width: 180, height: 200 },
+  canvas: { width: 400, height: 300 },
 }
 
 // -----------------------------------------------------------------------------

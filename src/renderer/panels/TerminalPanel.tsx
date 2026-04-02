@@ -18,7 +18,7 @@ import '@xterm/xterm/css/xterm.css'
 import type { TerminalPanelProps } from './types'
 import { terminalRegistry } from '../lib/terminalRegistry'
 import { useAppStore } from '../stores/appStore'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreContext } from '../stores/CanvasStoreContext'
 
 // ---------------------------------------------------------------------------
 // Component
@@ -43,8 +43,8 @@ export default function TerminalPanel({
   const rootPathRef = useRef(rootPath)
   rootPathRef.current = rootPath
 
-  const isFocused = useCanvasStore((s) => s.focusedNodeId === nodeId)
-  const zoomLevel = useCanvasStore((s) => s.zoomLevel)
+  const isFocused = useCanvasStoreContext((s) => s.focusedNodeId === nodeId)
+  const zoomLevel = useCanvasStoreContext((s) => s.zoomLevel)
 
   // -------------------------------------------------------------------------
   // Search handlers
@@ -158,7 +158,7 @@ export default function TerminalPanel({
         fitTimeoutRef.current = null
       }
 
-      terminalRegistry.detach(panelId)
+      terminalRegistry.detach(panelId, container)
 
       if (resizeObserverRef.current) {
         resizeObserverRef.current.disconnect()

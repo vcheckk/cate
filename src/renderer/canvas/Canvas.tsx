@@ -4,10 +4,11 @@
 // =============================================================================
 
 import React, { useRef, useCallback, useEffect, useMemo, useState } from 'react'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreContext, useCanvasStoreApi } from '../stores/CanvasStoreContext'
 import { useAppStore } from '../stores/appStore'
 import { useCanvasInteraction } from '../hooks/useCanvasInteraction'
 import { useUIStore } from '../stores/uiStore'
+import { registerDropZone } from '../hooks/useDockDrag'
 import { viewToCanvas } from '../lib/coordinates'
 import CanvasGrid from './CanvasGrid'
 import SnapGuides from './SnapGuides'
@@ -40,12 +41,13 @@ interface CanvasProps {
 
 const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
   const canvasRef = useRef<HTMLDivElement>(null)
+  const canvasApi = useCanvasStoreApi()
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
 
-  const zoom = useCanvasStore((s) => s.zoomLevel)
-  const offset = useCanvasStore((s) => s.viewportOffset)
-  const regions = useCanvasStore((s) => s.regions)
-  const annotations = useCanvasStore((s) => s.annotations)
+  const zoom = useCanvasStoreContext((s) => s.zoomLevel)
+  const offset = useCanvasStoreContext((s) => s.viewportOffset)
+  const regions = useCanvasStoreContext((s) => s.regions)
+  const annotations = useCanvasStoreContext((s) => s.annotations)
   const marquee = useUIStore((s) => s.marquee)
 
   const {
@@ -56,10 +58,20 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
     handleContextMenu,
     canvasContextMenu,
     closeCanvasContextMenu,
-  } = useCanvasInteraction(canvasRef)
+  } = useCanvasInteraction(canvasRef, canvasApi)
 
   // Inject the canvas-interacting style once at module level (not per mount)
   useEffect(injectCanvasInteractingStyle, [])
+
+  // Register canvas as a drop zone for dock-aware drag-and-drop
+  // Canvases live in the center dock zone
+  useEffect(() => {
+    return registerDropZone({
+      id: 'canvas-main',
+      zone: 'center',
+      getRect: () => canvasRef.current?.getBoundingClientRect() ?? null,
+    })
+  }, [])
 
   // Register wheel listener with { passive: false } so preventDefault works
   // React's onWheel is passive by default, which silently ignores preventDefault
@@ -90,7 +102,7 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
           height: entry.contentRect.height,
         }
         setContainerSize(size)
-        useCanvasStore.getState().setContainerSize(size)
+        canvasApi.getState().setContainerSize(size)
       }
     })
 
@@ -100,7 +112,7 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
       height: el.clientHeight,
     }
     setContainerSize(initialSize)
-    useCanvasStore.getState().setContainerSize(initialSize)
+    canvasApi.getState().setContainerSize(initialSize)
 
     return () => observer.disconnect()
   }, [])
@@ -111,7 +123,7 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
       // Only unfocus if clicking directly on the world div, not on a child node
       const target = e.target as HTMLElement
       if (!target.closest('[data-node-id]') && !target.closest('[data-region-id]')) {
-        useCanvasStore.getState().unfocus()
+        canvasApi.getState().unfocus()
       }
     },
     [],
@@ -138,7 +150,7 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
     const rect = canvasRef.current?.getBoundingClientRect()
     if (!rect) return
     const viewPoint = { x: e.clientX - rect.left, y: e.clientY - rect.top }
-    const { zoomLevel, viewportOffset } = useCanvasStore.getState()
+    const { zoomLevel, viewportOffset } = canvasApi.getState()
     const canvasPoint = viewToCanvas(viewPoint, zoomLevel, viewportOffset)
     const wsId = useAppStore.getState().selectedWorkspaceId
     useAppStore.getState().createEditor(wsId, filePath, canvasPoint)
@@ -183,12 +195,18 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
                 onCreateAtPoint('browser', canvasContextMenu.canvasPoint)
               },
             },
+            {
+              label: 'New Canvas',
+              onClick: () => {
+                onCreateAtPoint('canvas', canvasContextMenu.canvasPoint)
+              },
+            },
           ]
         : []),
       {
         label: 'New Region',
         onClick: () => {
-          useCanvasStore.getState().addRegion(
+          canvasApi.getState().addRegion(
             'Region',
             canvasContextMenu.canvasPoint,
             { width: 400, height: 300 },
@@ -198,13 +216,13 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
       {
         label: 'New Sticky Note',
         onClick: () => {
-          useCanvasStore.getState().addAnnotation('stickyNote', canvasContextMenu.canvasPoint)
+          canvasApi.getState().addAnnotation('stickyNote', canvasContextMenu.canvasPoint)
         },
       },
       {
         label: 'New Text Label',
         onClick: () => {
-          useCanvasStore.getState().addAnnotation('textLabel', canvasContextMenu.canvasPoint)
+          canvasApi.getState().addAnnotation('textLabel', canvasContextMenu.canvasPoint)
         },
       },
     ]
@@ -213,6 +231,7 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
   return (
     <div
       ref={canvasRef}
+      data-canvas-container
       className="relative w-full h-full overflow-hidden bg-canvas-bg"
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}

@@ -4,7 +4,8 @@
 // =============================================================================
 
 import { useCallback, useRef, useState, useEffect } from 'react'
-import { useCanvasStore, cancelZoomAnimation } from '../stores/canvasStore'
+import type { StoreApi } from 'zustand'
+import type { CanvasStore } from '../stores/canvasStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useUIStore } from '../stores/uiStore'
 import { viewToCanvas } from '../lib/coordinates'
@@ -40,6 +41,7 @@ interface CanvasInteractionHandlers {
 
 export function useCanvasInteraction(
   canvasRef: React.RefObject<HTMLDivElement | null>,
+  canvasStoreApi: StoreApi<CanvasStore>,
 ): CanvasInteractionHandlers {
   const isPanning = useRef(false)
   const lastPanPos = useRef<{ x: number; y: number } | null>(null)
@@ -96,7 +98,7 @@ export function useCanvasInteraction(
   const smoothZoomTick = useCallback(() => {
     if (targetZoom.current === null) return
 
-    const state = useCanvasStore.getState()
+    const state = canvasStoreApi.getState()
     const current = state.zoomLevel
     const target = targetZoom.current
 
@@ -104,7 +106,7 @@ export function useCanvasInteraction(
     if (Math.abs(diff) < 0.001) {
       // Close enough — snap to target
       const canvasPoint = viewToCanvas(cursorViewPoint.current, current, state.viewportOffset)
-      useCanvasStore.getState().setZoomAndOffset(target, {
+      canvasStoreApi.getState().setZoomAndOffset(target, {
         x: cursorViewPoint.current.x - canvasPoint.x * target,
         y: cursorViewPoint.current.y - canvasPoint.y * target,
       })
@@ -116,7 +118,7 @@ export function useCanvasInteraction(
     // Lerp toward target (0.15 per 16.67ms frame equivalent)
     const newZoom = current + diff * 0.15
     const canvasPoint = viewToCanvas(cursorViewPoint.current, current, state.viewportOffset)
-    useCanvasStore.getState().setZoomAndOffset(newZoom, {
+    canvasStoreApi.getState().setZoomAndOffset(newZoom, {
       x: cursorViewPoint.current.x - canvasPoint.x * newZoom,
       y: cursorViewPoint.current.y - canvasPoint.y * newZoom,
     })
@@ -142,7 +144,7 @@ export function useCanvasInteraction(
       if (target.tagName === 'WEBVIEW') {
         const nodeEl = target.closest('[data-node-id]')
         const nodeId = nodeEl?.getAttribute('data-node-id')
-        const { focusedNodeId } = useCanvasStore.getState()
+        const { focusedNodeId } = canvasStoreApi.getState()
         if (nodeId && nodeId === focusedNodeId) {
           return
         }
@@ -152,7 +154,7 @@ export function useCanvasInteraction(
       if (panelContent) {
         const nodeEl = panelContent.closest('[data-node-id]')
         const nodeId = nodeEl?.getAttribute('data-node-id')
-        const { focusedNodeId } = useCanvasStore.getState()
+        const { focusedNodeId } = canvasStoreApi.getState()
         if (nodeId && nodeId === focusedNodeId) {
           const isHorizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY)
           if (!isHorizontal) {
@@ -173,7 +175,7 @@ export function useCanvasInteraction(
       e.stopPropagation()
 
       const { zoomLevel, viewportOffset, setViewportOffset } =
-        useCanvasStore.getState()
+        canvasStoreApi.getState()
       const { zoomSpeed } = useSettingsStore.getState()
 
       if (e.metaKey || e.ctrlKey) {
@@ -186,7 +188,7 @@ export function useCanvasInteraction(
         }
 
         // Cancel any toolbar animateZoomTo animation
-        cancelZoomAnimation()
+        canvasStoreApi.getState().cancelZoomAnimation()
 
         const rect = canvasRef.current?.getBoundingClientRect()
         if (!rect) return
@@ -224,7 +226,7 @@ export function useCanvasInteraction(
             const dy = pendingPanDelta.current.y
             pendingPanDelta.current.x = 0
             pendingPanDelta.current.y = 0
-            const { viewportOffset: vo, setViewportOffset: setVO } = useCanvasStore.getState()
+            const { viewportOffset: vo, setViewportOffset: setVO } = canvasStoreApi.getState()
             setVO({ x: vo.x - dx, y: vo.y - dy })
           })
         }
@@ -268,7 +270,7 @@ export function useCanvasInteraction(
         if (!isOnNode && !isOnRegion) {
           const rect = canvasRef.current?.getBoundingClientRect()
           if (!rect) return
-          const { zoomLevel, viewportOffset } = useCanvasStore.getState()
+          const { zoomLevel, viewportOffset } = canvasStoreApi.getState()
           const startCanvasX = (e.clientX - rect.left - viewportOffset.x) / zoomLevel
           const startCanvasY = (e.clientY - rect.top - viewportOffset.y) / zoomLevel
 
@@ -285,7 +287,7 @@ export function useCanvasInteraction(
               didDrag = true
             }
             if (didDrag) {
-              const { zoomLevel: z, viewportOffset: vo } = useCanvasStore.getState()
+              const { zoomLevel: z, viewportOffset: vo } = canvasStoreApi.getState()
               const r = canvasRef.current?.getBoundingClientRect()
               if (!r) return
               const currentCanvasX = (ev.clientX - r.left - vo.x) / z
@@ -305,13 +307,13 @@ export function useCanvasInteraction(
             useUIStore.getState().setMarquee(null)
 
             if (!didDrag) {
-              useCanvasStore.getState().clearSelection()
-              useCanvasStore.getState().unfocus()
+              canvasStoreApi.getState().clearSelection()
+              canvasStoreApi.getState().unfocus()
               return
             }
 
             // Compute final marquee rect in canvas-space
-            const { zoomLevel: z, viewportOffset: vo } = useCanvasStore.getState()
+            const { zoomLevel: z, viewportOffset: vo } = canvasStoreApi.getState()
             const r = canvasRef.current?.getBoundingClientRect()
             if (!r) return
             const endCanvasX = (ev.clientX - r.left - vo.x) / z
@@ -321,7 +323,7 @@ export function useCanvasInteraction(
             const mw = Math.abs(endCanvasX - startCanvasX)
             const mh = Math.abs(endCanvasY - startCanvasY)
 
-            const { nodes, regions } = useCanvasStore.getState()
+            const { nodes, regions } = canvasStoreApi.getState()
 
             const hitNodeIds = Object.values(nodes)
               .filter((n) => rectsIntersect(mx, my, mw, mh, n.origin.x, n.origin.y, n.size.width, n.size.height))
@@ -333,10 +335,10 @@ export function useCanvasInteraction(
 
             // Must select both atomically — selectRegions overwrites selectedNodeIds
             if (!shiftHeld) {
-              useCanvasStore.getState().clearSelection()
+              canvasStoreApi.getState().clearSelection()
             }
-            useCanvasStore.getState().selectNodes(hitNodeIds, true)
-            useCanvasStore.getState().selectRegions(hitRegionIds, true)
+            canvasStoreApi.getState().selectNodes(hitNodeIds, true)
+            canvasStoreApi.getState().selectRegions(hitRegionIds, true)
           }
 
           window.addEventListener('mousemove', handleMarqueeMove)
@@ -364,7 +366,7 @@ export function useCanvasInteraction(
       const dy = e.clientY - lastPanPos.current.y
 
       const { viewportOffset, setViewportOffset } =
-        useCanvasStore.getState()
+        canvasStoreApi.getState()
 
       setViewportOffset({
         x: viewportOffset.x + dx,
@@ -398,7 +400,7 @@ export function useCanvasInteraction(
                 x: e.clientX - rect.left,
                 y: e.clientY - rect.top,
               }
-              const { zoomLevel, viewportOffset } = useCanvasStore.getState()
+              const { zoomLevel, viewportOffset } = canvasStoreApi.getState()
               const canvasPoint = viewToCanvas(viewPoint, zoomLevel, viewportOffset)
               setCanvasContextMenu({
                 x: e.clientX,
@@ -469,7 +471,7 @@ export function useCanvasInteraction(
                   return
                 }
 
-                const { viewportOffset, setViewportOffset } = useCanvasStore.getState()
+                const { viewportOffset, setViewportOffset } = canvasStoreApi.getState()
                 const scale = dt / 16.67
                 setViewportOffset({
                   x: viewportOffset.x + velX * scale,

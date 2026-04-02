@@ -5,7 +5,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { watch, FSWatcher } from 'chokidar'
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain } from 'electron'
 import {
   FS_READ_FILE,
   FS_WRITE_FILE,
@@ -15,14 +15,21 @@ import {
   FS_WATCH_EVENT,
   FS_STAT,
   FS_DELETE,
+  FS_RENAME,
+  FS_MKDIR,
 } from '../../shared/ipc-channels'
 import { FileTreeNode, FILE_EXCLUSIONS } from '../../shared/types'
+import { sendToWindow, windowFromEvent } from '../windowRegistry'
 
-// Active chokidar file watchers keyed by directory path
+// Active chokidar file watchers keyed by "windowId:dirPath"
 const watchers: Map<string, { watcher: FSWatcher; cancelFlush?: () => void }> = new Map()
 
 // Set of exclusion names for fast lookup
 const exclusionSet = new Set(FILE_EXCLUSIONS)
+
+function watcherKey(windowId: number, dirPath: string): string {
+  return `${windowId}:${dirPath}`
+}
 
 async function readFile(filePath: string): Promise<string> {
   return fs.readFile(filePath, 'utf-8')
@@ -95,9 +102,11 @@ async function readDir(dirPath: string): Promise<FileTreeNode[]> {
   return [...dirs, ...files]
 }
 
-function watchStart(dirPath: string, mainWindow: BrowserWindow): void {
-  // Stop existing watcher for this path if any
-  watchStop(dirPath)
+function watchStart(dirPath: string, ownerWindowId: number): void {
+  const key = watcherKey(ownerWindowId, dirPath)
+
+  // Stop existing watcher for this window+path if any
+  watchStop(dirPath, ownerWindowId)
 
   const watcher = watch(dirPath, {
     ignoreInitial: true,
@@ -117,9 +126,8 @@ function watchStart(dirPath: string, mainWindow: BrowserWindow): void {
     if (!flushTimer) {
       flushTimer = setTimeout(() => {
         flushTimer = null
-        if (mainWindow.isDestroyed()) return
         for (const event of pendingEvents.values()) {
-          mainWindow.webContents.send(FS_WATCH_EVENT, event)
+          sendToWindow(ownerWindowId, FS_WATCH_EVENT, event)
         }
         pendingEvents = new Map()
       }, 150)
@@ -130,7 +138,7 @@ function watchStart(dirPath: string, mainWindow: BrowserWindow): void {
   watcher.on('change', (filePath: string) => queueEvent('update', filePath))
   watcher.on('unlink', (filePath: string) => queueEvent('delete', filePath))
 
-  watchers.set(dirPath, {
+  watchers.set(key, {
     watcher,
     cancelFlush: () => {
       if (flushTimer) {
@@ -142,16 +150,31 @@ function watchStart(dirPath: string, mainWindow: BrowserWindow): void {
   })
 }
 
-function watchStop(dirPath: string): void {
-  const entry = watchers.get(dirPath)
+function watchStop(dirPath: string, ownerWindowId: number): void {
+  const key = watcherKey(ownerWindowId, dirPath)
+  const entry = watchers.get(key)
   if (entry) {
     entry.cancelFlush?.()
     entry.watcher.close()
-    watchers.delete(dirPath)
+    watchers.delete(key)
   }
 }
 
-export function registerHandlers(mainWindow: BrowserWindow): void {
+/**
+ * Stop all watchers owned by a specific window (called on window close).
+ */
+export function stopWatchersForWindow(windowId: number): void {
+  const prefix = `${windowId}:`
+  for (const [key, entry] of watchers) {
+    if (key.startsWith(prefix)) {
+      entry.cancelFlush?.()
+      entry.watcher.close()
+      watchers.delete(key)
+    }
+  }
+}
+
+export function registerHandlers(): void {
   ipcMain.handle(FS_READ_FILE, async (_event, filePath: string) => {
     return readFile(filePath)
   })
@@ -164,12 +187,18 @@ export function registerHandlers(mainWindow: BrowserWindow): void {
     return readDir(dirPath)
   })
 
-  ipcMain.handle(FS_WATCH_START, async (_event, dirPath: string) => {
-    watchStart(dirPath, mainWindow)
+  ipcMain.handle(FS_WATCH_START, async (event, dirPath: string) => {
+    const win = windowFromEvent(event)
+    if (win) {
+      watchStart(dirPath, win.id)
+    }
   })
 
-  ipcMain.handle(FS_WATCH_STOP, async (_event, dirPath: string) => {
-    watchStop(dirPath)
+  ipcMain.handle(FS_WATCH_STOP, async (event, dirPath: string) => {
+    const win = windowFromEvent(event)
+    if (win) {
+      watchStop(dirPath, win.id)
+    }
   })
 
   ipcMain.handle(FS_STAT, async (_event, filePath: string) => {
@@ -184,5 +213,13 @@ export function registerHandlers(mainWindow: BrowserWindow): void {
     } else {
       await fs.unlink(filePath)
     }
+  })
+
+  ipcMain.handle(FS_RENAME, async (_event, oldPath: string, newPath: string) => {
+    await fs.rename(oldPath, newPath)
+  })
+
+  ipcMain.handle(FS_MKDIR, async (_event, dirPath: string) => {
+    await fs.mkdir(dirPath, { recursive: true })
   })
 }

@@ -5,7 +5,7 @@
 
 import React from 'react'
 import { Terminal, Globe, FileText, Minus, Plus } from 'lucide-react'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreApi } from '../stores/CanvasStoreContext'
 
 interface CanvasToolbarProps {
   zoom: number
@@ -42,6 +42,7 @@ const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
   onZoomIn,
   onZoomOut,
 }) => {
+  const canvasApi = useCanvasStoreApi()
   const zoomText = `${Math.round(zoom * 100)}%`
 
   return (
@@ -60,7 +61,7 @@ const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
             <FileText size={16} className="text-white/85" />
           </ToolbarButton>
 
-          {/* Divider */}
+{/* Divider */}
           <div className="w-px h-5 bg-white/[0.15] mx-1" />
 
           {/* Zoom controls */}
@@ -68,7 +69,7 @@ const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
             <Minus size={14} className="text-white/85" />
           </ToolbarButton>
           <button
-            onClick={() => useCanvasStore.getState().animateZoomTo(1.0)}
+            onClick={() => canvasApi.getState().animateZoomTo(1.0)}
             title="Reset zoom to 100%"
             className="text-xs font-mono text-white/70 min-w-[44px] text-center select-none rounded-md hover:bg-white/[0.1] cursor-pointer px-1 py-0.5 transition-all duration-100"
           >

@@ -2,17 +2,21 @@
 // Notification IPC handlers — OS-level notifications via Electron Notification API
 // =============================================================================
 
-import { ipcMain, Notification, app, BrowserWindow } from 'electron'
+import { ipcMain, Notification, app } from 'electron'
 import { NOTIFY_OS, NOTIFY_ACTION } from '../../shared/ipc-channels'
+import { sendToWindow, windowFromEvent } from '../windowRegistry'
 import type { NotificationAction } from '../../shared/types'
 
-export function registerHandlers(mainWindow: BrowserWindow): void {
+export function registerHandlers(): void {
   ipcMain.handle(
     NOTIFY_OS,
     async (
-      _event,
+      event,
       payload: { title: string; body: string; action?: NotificationAction },
     ) => {
+      const win = windowFromEvent(event)
+      const ownerWindowId = win?.id ?? -1
+
       if (Notification.isSupported()) {
         const notification = new Notification({
           title: payload.title,
@@ -20,15 +24,15 @@ export function registerHandlers(mainWindow: BrowserWindow): void {
         })
 
         notification.on('click', () => {
-          // Focus the main window
-          if (!mainWindow.isDestroyed()) {
-            if (mainWindow.isMinimized()) mainWindow.restore()
-            mainWindow.focus()
+          // Focus the owning window
+          if (win && !win.isDestroyed()) {
+            if (win.isMinimized()) win.restore()
+            win.focus()
           }
 
           // Send the action back to the renderer so it can execute it
-          if (payload.action && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send(NOTIFY_ACTION, payload.action)
+          if (payload.action) {
+            sendToWindow(ownerWindowId, NOTIFY_ACTION, payload.action)
           }
         })
 

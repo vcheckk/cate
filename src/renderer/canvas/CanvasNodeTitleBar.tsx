@@ -7,7 +7,7 @@ import React, { useCallback, useState } from 'react'
 import { Terminal, Globe, FileText, GitBranch, Maximize2, Minimize2, Lock, Unlock, X } from 'lucide-react'
 import type { PanelType } from '../../shared/types'
 import { panelColor } from '../panels/types'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreApi } from '../stores/CanvasStoreContext'
 import ContextMenu from '../ui/ContextMenu'
 
 // -----------------------------------------------------------------------------
@@ -71,6 +71,7 @@ const CanvasNodeTitleBar: React.FC<TitleBarProps> = ({
   onSplitVertical,
   onAddTab,
 }) => {
+  const canvasApi = useCanvasStoreApi()
   const iconColor = panelColor(panelType)
 
   // Local context menu state
@@ -136,13 +137,13 @@ const CanvasNodeTitleBar: React.FC<TitleBarProps> = ({
     {
       label: 'Move to Front',
       onClick: () => {
-        useCanvasStore.getState().moveToFront(nodeId)
+        canvasApi.getState().moveToFront(nodeId)
       },
     },
     {
       label: 'Move to Back',
       onClick: () => {
-        useCanvasStore.getState().moveToBack(nodeId)
+        canvasApi.getState().moveToBack(nodeId)
       },
     },
     ...(onSplitHorizontal || onSplitVertical || onAddTab

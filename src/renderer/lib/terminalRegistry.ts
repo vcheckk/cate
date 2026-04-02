@@ -216,7 +216,48 @@ async function getOrCreate(panelId: string, opts: CreateOpts): Promise<RegistryE
     })
     cleanupListeners.push(removeExitListener)
 
-    // 8. xterm -> PTY: keystrokes
+    // 8. Handle modified special keys that xterm.js doesn't translate to
+    //    distinct escape sequences (e.g. Ctrl+Enter, Shift+Enter, etc.).
+    //    We send CSI u (fixterms/kitty) encoded sequences directly to the PTY
+    //    so shells and TUI programs can distinguish these key combos.
+    const CSI_U_KEYS: Record<string, number> = {
+      Enter: 13,
+      Tab: 9,
+      Backspace: 127,
+      Escape: 27,
+      Space: 32,
+    }
+
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== 'keydown') return true
+
+      const keyCode = CSI_U_KEYS[event.key]
+      if (keyCode === undefined) return true // let xterm handle all other keys
+
+      // Build modifier param: 1 + (shift=1, alt=2, ctrl=4, meta=8)
+      let mod = 1
+      if (event.shiftKey) mod += 1
+      if (event.altKey) mod += 2
+      if (event.ctrlKey) mod += 4
+      if (event.metaKey) mod += 8
+
+      // No modifier — let xterm handle normally
+      if (mod === 1) return true
+
+      // Shift+Tab already handled by xterm as reverse-tab (\x1b[Z)
+      if (event.key === 'Tab' && mod === 2) return true
+
+      // Ctrl+Shift+C/V overlap — but those aren't special keys, so won't match.
+      // Cmd+key combos are app shortcuts — let them propagate to the shortcut handler.
+      if (event.metaKey) return true
+
+      // Send CSI u sequence: ESC [ keycode ; modifier u
+      electronAPI.terminalWrite(ptyId, `\x1b[${keyCode};${mod}u`)
+      event.preventDefault()
+      return false
+    })
+
+    // 8b. xterm -> PTY: keystrokes (standard path for all other input)
     const dataDisposable = terminal.onData((data) => {
       electronAPI.terminalWrite(ptyId, data)
     })
@@ -309,35 +350,57 @@ function attach(panelId: string, container: HTMLDivElement): void {
   }
 
   // Fit after the next frame — the container may still be mid-layout during
-  // the sync DOM append (e.g. WebGL canvas initialization).
-  requestAnimationFrame(() => {
+  // the sync DOM append (e.g. WebGL canvas initialization).  When a dock zone
+  // transitions from hidden→visible the container may have 0×0 dimensions for
+  // a few frames, so retry up to 3 times.
+  const attemptFit = (retriesLeft: number): void => {
     if (!registry.has(panelId)) return
+
+    if (retriesLeft > 0 && (container.offsetWidth === 0 || container.offsetHeight === 0)) {
+      requestAnimationFrame(() => attemptFit(retriesLeft - 1))
+      return
+    }
+
     try {
-      const viewportEl = terminal.element?.querySelector('.xterm-viewport')
-      const savedScrollTop = viewportEl?.scrollTop ?? 0
+      // Check if user was at (or near) the bottom before fit
+      const buf = terminal.buffer.active
+      const wasAtBottom = buf.viewportY >= buf.baseY
+
       fitAddon.fit()
       terminal.refresh(0, terminal.rows - 1)
-      // Restore scroll position — fit/refresh can reset the viewport scrollTop
-      if (viewportEl && viewportEl.scrollTop !== savedScrollTop) {
-        viewportEl.scrollTop = savedScrollTop
+
+      // If the user was at the bottom, ensure we stay there — fit() can
+      // change the row count which shifts the scroll area dimensions.
+      // If they were scrolled up, let xterm keep its internal viewport
+      // position (do NOT force a stale scrollTop which desyncs the viewport).
+      if (wasAtBottom) {
+        terminal.scrollToBottom()
       }
     } catch { /* ignore */ }
-  })
+  }
+
+  requestAnimationFrame(() => attemptFit(3))
 }
 
 /**
  * Removes the xterm DOM element from its current container.
  * Does NOT dispose the terminal or kill the PTY — the terminal remains live
  * in the registry and can be re-attached via attach().
+ *
+ * If `fromContainer` is provided, only detach when the element is currently
+ * inside that specific container.  This prevents an unmounting component from
+ * tearing the terminal out of a *new* container that already called attach().
  */
-function detach(panelId: string): void {
+function detach(panelId: string, fromContainer?: HTMLElement): void {
   const entry = registry.get(panelId)
   if (!entry) return
 
   const el = (entry.terminal as unknown as { element?: HTMLElement }).element
-  if (el?.parentElement) {
-    el.parentElement.removeChild(el)
-  }
+  if (!el?.parentElement) return
+
+  if (fromContainer && el.parentElement !== fromContainer) return
+
+  el.parentElement.removeChild(el)
 }
 
 /**

@@ -4,13 +4,14 @@
 
 import React, { useCallback, useRef, useState } from 'react'
 import type { CanvasAnnotation } from '../../shared/types'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreApi } from '../stores/CanvasStoreContext'
 
 interface Props {
   annotation: CanvasAnnotation
 }
 
 const CanvasAnnotationComponent: React.FC<Props> = ({ annotation }) => {
+  const canvasApi = useCanvasStoreApi()
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState(annotation.content)
   const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null)
@@ -25,10 +26,10 @@ const CanvasAnnotationComponent: React.FC<Props> = ({ annotation }) => {
     }
     const handleMove = (ev: MouseEvent) => {
       if (!dragRef.current) return
-      const zoom = useCanvasStore.getState().zoomLevel
+      const zoom = canvasApi.getState().zoomLevel
       const dx = (ev.clientX - dragRef.current.startX) / zoom
       const dy = (ev.clientY - dragRef.current.startY) / zoom
-      useCanvasStore.getState().moveAnnotation(annotation.id, {
+      canvasApi.getState().moveAnnotation(annotation.id, {
         x: dragRef.current.originX + dx,
         y: dragRef.current.originY + dy,
       })
@@ -49,14 +50,14 @@ const CanvasAnnotationComponent: React.FC<Props> = ({ annotation }) => {
 
   const handleBlur = useCallback(() => {
     setIsEditing(false)
-    useCanvasStore.getState().updateAnnotation(annotation.id, editContent)
+    canvasApi.getState().updateAnnotation(annotation.id, editContent)
   }, [annotation.id, editContent])
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
     if (confirm('Delete this annotation?')) {
-      useCanvasStore.getState().removeAnnotation(annotation.id)
+      canvasApi.getState().removeAnnotation(annotation.id)
     }
   }, [annotation.id])
 

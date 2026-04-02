@@ -1,13 +1,20 @@
 // =============================================================================
 // useNodeDrag — drag-to-move hook for canvas nodes.
 // Ported from CanvasNode.swift drag logic.
+// Extended for Phase 3: detects when drag exits canvas bounds and transitions
+// to dock-drop mode.
 // =============================================================================
 
 import { useCallback, useEffect, useRef } from 'react'
-import { useCanvasStore } from '../stores/canvasStore'
+import type { StoreApi } from 'zustand'
+import type { CanvasStore } from '../stores/canvasStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { snap, snapToEdges } from '../canvas/layoutEngine'
-import type { Point, Rect } from '../../shared/types'
+import { snapToEdges, snapNodeToGrid } from '../canvas/layoutEngine'
+import type { Point, PanelTransferSnapshot } from '../../shared/types'
+import { createTransferSnapshot } from '../lib/panelTransfer'
+import { useDockDragStore, hitTestDropTarget } from './useDockDrag'
+import { useAppStore } from '../stores/appStore'
+import { executeDrop } from '../docking/dropExecution'
 
 interface DragState {
   lastClientX: number
@@ -23,7 +30,28 @@ interface UseNodeDragReturn {
   handleDragStart: (e: React.MouseEvent) => void
 }
 
-export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragReturn {
+/** Check if cursor is within the canvas container element bounds, inset by
+ *  the edge drop zone margin so dragging to the window edge transitions to
+ *  dock-drag mode even though the canvas element spans the full center area. */
+const EDGE_INSET = 60
+
+function isCursorInCanvas(clientX: number, clientY: number): boolean {
+  const canvasEl = document.querySelector('[data-canvas-container]')
+  if (!canvasEl) return true // fallback: assume in canvas
+  const rect = canvasEl.getBoundingClientRect()
+  return (
+    clientX >= rect.left + EDGE_INSET &&
+    clientX <= rect.right - EDGE_INSET &&
+    clientY >= rect.top &&
+    clientY <= rect.bottom - EDGE_INSET
+  )
+}
+
+function isCursorOutsideWindow(clientX: number, clientY: number): boolean {
+  return clientX <= 0 || clientY <= 0 || clientX >= window.innerWidth || clientY >= window.innerHeight
+}
+
+export function useNodeDrag(nodeId: string, zoomLevel: number, canvasStoreApi: StoreApi<CanvasStore>): UseNodeDragReturn {
   const dragStateRef = useRef<DragState | null>(null)
   const isDraggingRef = useRef(false)
   const dragStartedRef = useRef(false)
@@ -31,6 +59,10 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
   const rafId = useRef<number>(0)
   const pendingOrigin = useRef<Point | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  // Track whether we've transitioned to dock-drag mode
+  const inDockDragRef = useRef(false)
+  // Track cross-window drag state (when cursor exits the OS window)
+  const crossWindowRef = useRef<{ snapshot: PanelTransferSnapshot; panelId: string; nodeId: string } | null>(null)
 
   // Cleanup on unmount: abort any active drag listeners and clean up state
   useEffect(() => {
@@ -52,11 +84,11 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
     (e: React.MouseEvent) => {
       e.preventDefault()
 
-      const node = useCanvasStore.getState().nodes[nodeId]
+      const node = canvasStoreApi.getState().nodes[nodeId]
       if (!node || node.isPinned) return
 
       // Clear selection when dragging an unselected node
-      const preState = useCanvasStore.getState()
+      const preState = canvasStoreApi.getState()
       if (!preState.selectedNodeIds.has(nodeId)) {
         preState.clearSelection()
       }
@@ -71,6 +103,7 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
       isDraggingRef.current = true
       dragStartedRef.current = false
       wasDraggedRef.current = false
+      inDockDragRef.current = false
 
       const handleMouseMove = (ev: MouseEvent) => {
         const ds = dragStateRef.current
@@ -86,8 +119,73 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
           document.body.classList.add('canvas-interacting')
         }
 
-        const zoom = useCanvasStore.getState().zoomLevel
-        const currentNode = useCanvasStore.getState().nodes[nodeId]
+        // --- Dock drag mode detection ---
+        // Check if cursor has left the canvas area
+        const inCanvas = isCursorInCanvas(ev.clientX, ev.clientY)
+
+        if (!inCanvas && !inDockDragRef.current) {
+          // Transition to dock-drag mode
+          inDockDragRef.current = true
+          const currentNode = canvasStoreApi.getState().nodes[nodeId]
+          if (currentNode) {
+            // Look up panel info
+            const wsId = useAppStore.getState().selectedWorkspaceId
+            const ws = useAppStore.getState().workspaces.find(w => w.id === wsId)
+            const panel = ws?.panels[currentNode.panelId]
+            useDockDragStore.getState().startDrag(
+              currentNode.panelId,
+              panel?.type ?? 'terminal',
+              panel?.title ?? 'Panel',
+              { type: 'canvas', nodeId },
+            )
+          }
+        }
+
+        if (inCanvas && inDockDragRef.current) {
+          // Cursor re-entered canvas — exit dock-drag mode
+          inDockDragRef.current = false
+          useDockDragStore.getState().endDrag()
+        }
+
+        if (inDockDragRef.current) {
+          // In dock-drag mode: update cursor and hit-test drop targets
+          const dockDrag = useDockDragStore.getState()
+          dockDrag.updateCursor({ x: ev.clientX, y: ev.clientY })
+
+          // Check if cursor is outside the window BEFORE hit testing — otherwise
+          // the cursor can pass through a sibling panel's drop zone on the way out,
+          // causing a local drop instead of a detach.
+          const outsideWindow = isCursorOutsideWindow(ev.clientX, ev.clientY)
+          if (!outsideWindow) {
+            const target = hitTestDropTarget(ev.clientX, ev.clientY)
+            dockDrag.setDropTarget(target)
+          } else {
+            dockDrag.setDropTarget(null)
+          }
+          if (outsideWindow && !crossWindowRef.current && dockDrag.draggedPanelId) {
+            const panel = getPanelForId(dockDrag.draggedPanelId)
+            const node = canvasStoreApi.getState().nodes[nodeId]
+            if (panel && node) {
+              const snapshot = createTransferSnapshot(
+                panel,
+                { type: 'canvas', canvasId: '', canvasNodeId: nodeId },
+                { origin: node.origin, size: node.size },
+              )
+              crossWindowRef.current = { snapshot, panelId: dockDrag.draggedPanelId, nodeId }
+              window.electronAPI.crossWindowDragStart(snapshot, { x: ev.screenX, y: ev.screenY })
+            }
+          } else if (!outsideWindow && crossWindowRef.current) {
+            // Cursor re-entered this window — cancel cross-window drag
+            crossWindowRef.current = null
+            window.electronAPI.crossWindowDragCancel()
+          }
+
+          return
+        }
+
+        // --- Normal canvas drag ---
+        const zoom = canvasStoreApi.getState().zoomLevel
+        const currentNode = canvasStoreApi.getState().nodes[nodeId]
         if (!currentNode) return
 
         const deltaX = (ev.clientX - ds.lastClientX) / zoom
@@ -110,7 +208,7 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
             const origin = pendingOrigin.current
             if (!origin) return
 
-            const currentState = useCanvasStore.getState()
+            const currentState = canvasStoreApi.getState()
             const isInSelection = currentState.selectedNodeIds.has(nodeId)
             const isMultiDrag =
               isInSelection &&
@@ -130,7 +228,7 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
               for (const id of currentState.selectedNodeIds) {
                 const n = currentState.nodes[id]
                 if (n) {
-                  useCanvasStore.getState().moveNode(id, {
+                  canvasStoreApi.getState().moveNode(id, {
                     x: n.origin.x + dx,
                     y: n.origin.y + dy,
                   })
@@ -139,9 +237,9 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
               // Move selected regions without cascading to children
               // (contained nodes are already selected and moved above)
               for (const id of currentState.selectedRegionIds) {
-                const r = useCanvasStore.getState().regions[id]
+                const r = canvasStoreApi.getState().regions[id]
                 if (r) {
-                  useCanvasStore.getState().resizeRegion(id, r.size, {
+                  canvasStoreApi.getState().resizeRegion(id, r.size, {
                     x: r.origin.x + dx,
                     y: r.origin.y + dy,
                   })
@@ -151,13 +249,13 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
               return // Skip snap guides for multi-drag
             }
 
-            useCanvasStore.getState().moveNode(nodeId, origin)
+            canvasStoreApi.getState().moveNode(nodeId, origin)
             pendingOrigin.current = null
 
             // Magnetic snap guides (runs at most once per frame)
             const settings = useSettingsStore.getState()
             if (settings.snapToGridEnabled) {
-              const currentState = useCanvasStore.getState()
+              const currentState = canvasStoreApi.getState()
               const currentNode2 = currentState.nodes[nodeId]
               if (currentNode2) {
                 const neighbors = [
@@ -203,7 +301,7 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
                     }
                   }
 
-                  useCanvasStore.getState().moveNode(nodeId, magneticOrigin)
+                  canvasStoreApi.getState().moveNode(nodeId, magneticOrigin)
                 }
 
                 currentState.setSnapGuides({ lines: snapResult.lines })
@@ -213,7 +311,7 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
         }
       }
 
-      const handleMouseUp = () => {
+      const handleMouseUp = (ev: MouseEvent) => {
         if (abortRef.current) {
           abortRef.current.abort()
           abortRef.current = null
@@ -223,43 +321,90 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
         dragStartedRef.current = false
         document.body.classList.remove('canvas-interacting')
 
-        // Cancel any pending RAF and flush the last position immediately
+        // Cancel any pending RAF
         if (rafId.current) {
           cancelAnimationFrame(rafId.current)
           rafId.current = 0
         }
+
+        // --- Handle dock-drag drop ---
+        if (inDockDragRef.current) {
+          inDockDragRef.current = false
+          const dockDrag = useDockDragStore.getState()
+          const target = dockDrag.activeDropTarget
+          const panelId = dockDrag.draggedPanelId
+
+          if (target && panelId) {
+            // Drop within this window — cancel any cross-window drag
+            if (crossWindowRef.current) {
+              crossWindowRef.current = null
+              window.electronAPI.crossWindowDragCancel()
+            }
+            executeDrop(panelId, { type: 'canvas', nodeId }, target, canvasStoreApi)
+          } else if (isCursorOutsideWindow(ev.clientX, ev.clientY) && panelId) {
+            // Cursor is outside the window — try cross-window drop first, then fall back to detach
+            const cwState = crossWindowRef.current
+            crossWindowRef.current = null
+
+            if (cwState) {
+              // Ask main process to resolve: did any target window claim the drop?
+              window.electronAPI.crossWindowDragResolve().then(({ claimed }) => {
+                if (claimed) {
+                  // Target window accepted — remove panel from canvas
+                  canvasStoreApi.getState().finalizeRemoveNode(nodeId)
+                } else {
+                  // No target — fall back to creating a new dock window
+                  canvasStoreApi.getState().finalizeRemoveNode(nodeId)
+                  const wsId = useAppStore.getState().selectedWorkspaceId
+                  window.electronAPI.dragDetach(cwState.snapshot, wsId)
+                }
+              })
+            } else {
+              // No cross-window drag was active — direct detach
+              const panel = getPanelForId(panelId)
+              const node = canvasStoreApi.getState().nodes[nodeId]
+              if (panel && node) {
+                const snapshot = createTransferSnapshot(
+                  panel,
+                  { type: 'canvas', canvasId: '', canvasNodeId: nodeId },
+                  { origin: node.origin, size: node.size },
+                )
+                canvasStoreApi.getState().finalizeRemoveNode(nodeId)
+                const wsId = useAppStore.getState().selectedWorkspaceId
+                window.electronAPI.dragDetach(snapshot, wsId)
+              }
+            }
+          } else {
+            // No valid drop target — cancel cross-window drag and revert
+            if (crossWindowRef.current) {
+              crossWindowRef.current = null
+              window.electronAPI.crossWindowDragCancel()
+            }
+            const ds = dragStateRef.current
+            if (ds) {
+              canvasStoreApi.getState().moveNode(nodeId, ds.initialOrigin)
+            }
+          }
+          useDockDragStore.getState().endDrag()
+          canvasStoreApi.getState().clearSnapGuides()
+          dragStateRef.current = null
+          return
+        }
+
+        // Flush the last position immediately
         if (pendingOrigin.current) {
-          useCanvasStore.getState().moveNode(nodeId, pendingOrigin.current)
+          canvasStoreApi.getState().moveNode(nodeId, pendingOrigin.current)
           pendingOrigin.current = null
         }
 
         // Snap to grid if enabled
         const settings = useSettingsStore.getState()
         if (settings.snapToGridEnabled) {
-          const state = useCanvasStore.getState()
-          const node = state.nodes[nodeId]
-          if (node) {
-            const nodeRect: Rect = { origin: node.origin, size: node.size }
-            const neighbors: Rect[] = [
-              ...Object.values(state.nodes)
-                .filter((n) => n.id !== nodeId)
-                .map((n) => ({ origin: n.origin, size: n.size })),
-              ...Object.values(state.regions)
-                .map((r) => ({ origin: r.origin, size: r.size })),
-            ]
-
-            const snappedOrigin = snap(
-              nodeRect,
-              neighbors,
-              settings.gridSpacing,
-              8,
-            )
-            useCanvasStore.getState().moveNode(nodeId, snappedOrigin)
-          }
+          snapNodeToGrid(canvasStoreApi, nodeId, settings.gridSpacing, true)
         }
 
         // Containment detection: assign/remove regionId for single-node drags
-        const finalState = useCanvasStore.getState()
+        const finalState = canvasStoreApi.getState()
         const isMulti =
           finalState.selectedNodeIds.size > 1 || finalState.selectedRegionIds.size > 0
         if (!isMulti) {
@@ -294,7 +439,7 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
           }
         }
 
-        useCanvasStore.getState().clearSnapGuides()
+        canvasStoreApi.getState().clearSnapGuides()
         dragStateRef.current = null
       }
 
@@ -311,4 +456,15 @@ export function useNodeDrag(nodeId: string, zoomLevel: number): UseNodeDragRetur
     wasDragged: wasDraggedRef,
     handleDragStart,
   }
+}
+
+// Re-export for existing consumers
+export { executeDrop } from '../docking/dropExecution'
+
+// Helper: get panel info from app store
+function getPanelForId(panelId: string): import('../../shared/types').PanelState | undefined {
+  const state = useAppStore.getState()
+  const wsId = state.selectedWorkspaceId
+  const ws = state.workspaces.find(w => w.id === wsId)
+  return ws?.panels[panelId]
 }

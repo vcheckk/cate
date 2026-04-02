@@ -8,7 +8,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Globe, ArrowLeft, ArrowRight, RotateCw } from 'lucide-react'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useAppStore } from '../stores/appStore'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreContext } from '../stores/CanvasStoreContext'
 import { SEARCH_ENGINE_URLS } from '../../shared/types'
 import type { BrowserPanelProps } from './types'
 
@@ -93,7 +93,7 @@ export default function BrowserPanel({
   const updatePanelTitle = useAppStore((s) => s.updatePanelTitle)
   const updatePanelUrl = useAppStore((s) => s.updatePanelUrl)
 
-  const isFocused = useCanvasStore((s) => s.focusedNodeId === nodeId)
+  const isFocused = useCanvasStoreContext((s) => s.focusedNodeId === nodeId)
 
   const rawInitialUrl = url || browserHomepage || 'https://www.google.com'
   const initialUrl = rawInitialUrl.startsWith('about:') ? rawInitialUrl : normalizeUrl(rawInitialUrl)

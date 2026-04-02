@@ -4,17 +4,15 @@
 // =============================================================================
 
 import React, { useEffect, useRef, useState, useCallback, Suspense } from 'react'
-import { useAppStore, useSelectedWorkspace } from './stores/appStore'
-import { useCanvasStore, useNodeIds } from './stores/canvasStore'
-import type { PanelType, Point } from '../shared/types'
+import { useAppStore, useSelectedWorkspace, setupWorkspaceSync } from './stores/appStore'
+import { useCanvasStore } from './stores/canvasStore'
+import { CanvasStoreProvider } from './stores/CanvasStoreContext'
+import { setCanvasOperations } from './stores/appStore'
+import { createCanvasOps } from './lib/canvasBridge'
 import { useSettingsStore } from './stores/settingsStore'
 import { useUIStore } from './stores/uiStore'
-import { useShortcuts, ensureWorkspaceFolder } from './hooks/useShortcuts'
+import { useShortcuts } from './hooks/useShortcuts'
 import { useProcessMonitor } from './hooks/useProcessMonitor'
-import Canvas from './canvas/Canvas'
-import CanvasNode from './canvas/CanvasNode'
-import CanvasToolbar from './canvas/CanvasToolbar'
-import Minimap from './canvas/Minimap'
 import { Sidebar, RightSidebar } from './sidebar/Sidebar'
 const TerminalPanel = React.lazy(() => import('./panels/TerminalPanel'))
 const EditorPanel = React.lazy(() => import('./panels/EditorPanel'))
@@ -22,79 +20,93 @@ const BrowserPanel = React.lazy(() => import('./panels/BrowserPanel'))
 const GitPanel = React.lazy(() => import('./panels/GitPanel'))
 const FileExplorerPanel = React.lazy(() => import('./panels/FileExplorerPanel'))
 const ProjectListPanel = React.lazy(() => import('./panels/ProjectListPanel'))
+const CanvasPanel = React.lazy(() => import('./panels/CanvasPanel'))
 import { NodeSwitcher } from './ui/NodeSwitcher'
 import { PanelSwitcher } from './ui/PanelSwitcher'
 import { CommandPalette } from './ui/CommandPalette'
 import { GlobalSearch } from './ui/GlobalSearch'
-import { ShortcutHintOverlay } from './ui/ShortcutHintOverlay'
 import { SettingsWindow } from './settings/SettingsWindow'
 import { ToastContainer } from './ui/ToastContainer'
-import WelcomePage from './ui/WelcomePage'
 import { AISetupDialog } from './dialogs/AISetupDialog'
 import { loadSession, restoreSession, restoreMultiWorkspaceSession, setupAutoSave, saveSession } from './lib/session'
 import type { MultiWorkspaceSession } from '../shared/types'
-
-// -----------------------------------------------------------------------------
-// CanvasNodeWrapper — reads its own node slice so re-renders stay local
-// -----------------------------------------------------------------------------
-
-const CanvasNodeWrapper = React.memo(({ nodeId, zoomLevel, renderPanelContent }: {
-  nodeId: string
-  zoomLevel: number
-  renderPanelContent: (panelId: string, nodeId: string, zoomLevel: number) => React.ReactNode
-}) => {
-  const node = useCanvasStore((s) => s.nodes[nodeId])
-  const isFocused = useCanvasStore((s) => s.focusedNodeId === nodeId)
-  const currentWorkspace = useSelectedWorkspace()
-
-  if (!node) return null
-
-  const panel = currentWorkspace?.panels[node.panelId]
-  if (!panel) return null
-
-  const hasStack = node.stackedPanelIds && node.stackedPanelIds.length > 1
-  const activePanelId = hasStack
-    ? node.stackedPanelIds![node.activeStackIndex || 0]
-    : node.split ? node.split.panelIds[0] : node.panelId
-  const secondaryPanelId = !hasStack && node.split ? node.split.panelIds[1] : undefined
-
-  const activePanel = currentWorkspace?.panels[activePanelId] || panel
-
-  return (
-    <CanvasNode
-      nodeId={node.id}
-      panelId={activePanelId}
-      panelType={activePanel.type}
-      title={activePanel.title}
-      isFocused={isFocused}
-      zoomLevel={zoomLevel}
-      splitContent={secondaryPanelId ? renderPanelContent(secondaryPanelId, node.id, zoomLevel) : undefined}
-    >
-      {renderPanelContent(activePanelId, node.id, zoomLevel)}
-    </CanvasNode>
-  )
-})
+import { useDockStore } from './stores/dockStore'
+import MainWindowShell from './shells/MainWindowShell'
+import PanelWindowShell from './shells/PanelWindowShell'
+import DockWindowShell from './shells/DockWindowShell'
+import DragGhost from './docking/DragGhost'
+import { WindowTypeContext } from './stores/WindowTypeContext'
+import { setupCrossWindowDragListeners } from './hooks/useDockDrag'
 
 // -----------------------------------------------------------------------------
 // App
 // -----------------------------------------------------------------------------
 
+// -----------------------------------------------------------------------------
+// Query param parsing for window type routing
+// -----------------------------------------------------------------------------
+
+function getWindowParams(): { type: string; panelType?: string; panelId?: string; workspaceId?: string } {
+  const params = new URLSearchParams(window.location.search)
+  return {
+    type: params.get('type') ?? 'main',
+    panelType: params.get('panelType') ?? undefined,
+    panelId: params.get('panelId') ?? undefined,
+    workspaceId: params.get('workspaceId') ?? undefined,
+  }
+}
+
+// -----------------------------------------------------------------------------
+// App — routes to the correct shell based on window type
+// -----------------------------------------------------------------------------
+
 export default function App() {
+  const windowParams = getWindowParams()
+
+  // Dock windows get a full docking shell with splits/tabs
+  if (windowParams.type === 'dock') {
+    return (
+      <WindowTypeContext.Provider value="dock">
+        <DockWindowShell workspaceId={windowParams.workspaceId} />
+      </WindowTypeContext.Provider>
+    )
+  }
+
+  // Panel windows get a lightweight shell — no canvas, no dock zones (legacy)
+  if (windowParams.type === 'panel') {
+    return (
+      <PanelWindowShell
+        panelType={windowParams.panelType}
+        panelId={windowParams.panelId}
+        workspaceId={windowParams.workspaceId}
+      />
+    )
+  }
+
+  return (
+    <WindowTypeContext.Provider value="main">
+      <MainApp />
+    </WindowTypeContext.Provider>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// MainApp — the full main window application
+// -----------------------------------------------------------------------------
+
+function MainApp() {
   const [showSettings, setShowSettings] = useState(false)
   const initializedRef = useRef(false)
 
   // Store state
   const currentWorkspace = useSelectedWorkspace()
   const selectedWorkspaceId = useAppStore((s) => s.selectedWorkspaceId)
-  const nodeIds = useNodeIds()
-  const zoomLevel = useCanvasStore((s) => s.zoomLevel)
   const sidebarVisible = useUIStore((s) => s.sidebarVisible)
   const showNodeSwitcher = useUIStore((s) => s.showNodeSwitcher)
   const showCommandPalette = useUIStore((s) => s.showCommandPalette)
   const showPanelSwitcher = useUIStore((s) => s.showPanelSwitcher)
   const showGlobalSearch = useUIStore((s) => s.showGlobalSearch)
   const showAISetupDialog = useUIStore((s) => s.showAISetupDialog)
-  const showMinimap = useSettingsStore((s) => s.showMinimap)
 
   // Global hooks
   useShortcuts()
@@ -108,6 +120,9 @@ export default function App() {
     initializedRef.current = true
 
     const init = async () => {
+      // Wire canvas operations bridge before any workspace/panel creation
+      setCanvasOperations(createCanvasOps(useCanvasStore))
+
       await useSettingsStore.getState().loadSettings()
 
       // Try to restore previous session
@@ -117,10 +132,10 @@ export default function App() {
         const session = await loadSession()
         if (session) {
           if ((session as MultiWorkspaceSession).version === 2) {
-            await restoreMultiWorkspaceSession(session as MultiWorkspaceSession)
+            await restoreMultiWorkspaceSession(session as MultiWorkspaceSession, useCanvasStore)
             restored = true
           } else {
-            await restoreSession(session as any)
+            await restoreSession(session as any, useCanvasStore)
             restored = true
           }
         }
@@ -133,8 +148,16 @@ export default function App() {
         useAppStore.getState().selectWorkspace(wsId)
       }
 
-      // Start auto-save
-      setupAutoSave()
+      // Ensure the center dock zone has a canvas panel
+      const centerZone = useDockStore.getState().zones.center
+      if (!centerZone.layout) {
+        const wsId = useAppStore.getState().selectedWorkspaceId
+        useAppStore.getState().createCanvas(wsId)
+      }
+
+      // Start auto-save and cross-window workspace sync
+      setupAutoSave(useCanvasStore)
+      setupWorkspaceSync()
     }
     init()
   }, [])
@@ -149,30 +172,38 @@ export default function App() {
   }, [])
 
   // ---------------------------------------------------------------------------
-  // Toolbar callbacks
+  // Panel window dock-back (double-click title bar)
   // ---------------------------------------------------------------------------
-  const onNewTerminal = useCallback(async () => {
-    const wsId = await ensureWorkspaceFolder(selectedWorkspaceId)
-    if (wsId) useAppStore.getState().createTerminal(wsId)
-  }, [selectedWorkspaceId])
+  useEffect(() => {
+    return window.electronAPI.onPanelWindowDockBack((_panelWindowId: number) => {
+      // The panel window is being closed and wants to dock back.
+      // For now, we don't have enough context to re-dock the specific panel,
+      // since the panel window closes itself. The panel was already removed
+      // from the main window when it was detached. This is a UX hook for
+      // future enhancement where we'd track the source location.
+    })
+  }, [])
 
-  const onNewBrowser = useCallback(async () => {
-    const wsId = await ensureWorkspaceFolder(selectedWorkspaceId)
-    if (wsId) useAppStore.getState().createBrowser(wsId)
-  }, [selectedWorkspaceId])
+  // ---------------------------------------------------------------------------
+  // Cross-window drag support — accept panels dragged from dock windows
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    return setupCrossWindowDragListeners((snapshot, target) => {
+      // A panel was dropped into the main window from another window
+      const wsId = useAppStore.getState().selectedWorkspaceId
+      useAppStore.getState().addPanel(wsId, snapshot.panel)
+      useDockStore.getState().dockPanel(
+        snapshot.panel.id,
+        target.type === 'zone' ? target.zone : 'center',
+        target,
+      )
 
-  const onNewEditor = useCallback(async () => {
-    const wsId = await ensureWorkspaceFolder(selectedWorkspaceId)
-    if (wsId) useAppStore.getState().createEditor(wsId)
-  }, [selectedWorkspaceId])
-
-  const onZoomIn = useCallback(() => {
-    useCanvasStore.getState().animateZoomTo(zoomLevel + 0.1)
-  }, [zoomLevel])
-
-  const onZoomOut = useCallback(() => {
-    useCanvasStore.getState().animateZoomTo(zoomLevel - 0.1)
-  }, [zoomLevel])
+      // ACK terminal transfer if applicable
+      if (snapshot.terminalPtyId) {
+        window.electronAPI.panelTransferAck(snapshot.terminalPtyId)
+      }
+    })
+  }, [])
 
   // ---------------------------------------------------------------------------
   // Drag-and-drop folder from Finder
@@ -198,36 +229,26 @@ export default function App() {
     }
   }, [selectedWorkspaceId])
 
-  /** Called when the user right-clicks empty canvas and picks a panel type. */
-  const onCreateAtPoint = useCallback(
-    (type: PanelType, canvasPoint: Point) => {
-      const store = useAppStore.getState()
-      switch (type) {
-        case 'terminal':
-          store.createTerminal(selectedWorkspaceId, undefined, canvasPoint)
-          break
-        case 'browser':
-          store.createBrowser(selectedWorkspaceId, undefined, canvasPoint)
-          break
-        case 'editor':
-          store.createEditor(selectedWorkspaceId, undefined, canvasPoint)
-          break
-        case 'git':
-          store.createGit(selectedWorkspaceId, canvasPoint)
-          break
-        case 'fileExplorer':
-          store.createFileExplorer(selectedWorkspaceId, canvasPoint)
-          break
-        case 'projectList':
-          store.createProjectList(selectedWorkspaceId, canvasPoint)
-          break
-      }
+  // ---------------------------------------------------------------------------
+  // Dock zone panel helpers
+  // ---------------------------------------------------------------------------
+  const getPanelTitle = useCallback(
+    (panelId: string) => {
+      if (!currentWorkspace) return 'Panel'
+      return currentWorkspace.panels[panelId]?.title ?? 'Panel'
+    },
+    [currentWorkspace],
+  )
+
+  const handleDockClosePanel = useCallback(
+    (panelId: string) => {
+      useAppStore.getState().closePanel(selectedWorkspaceId, panelId)
     },
     [selectedWorkspaceId],
   )
 
   // ---------------------------------------------------------------------------
-  // Render panel content for a node
+  // Render panel content (used both in dock zones and inside canvas nodes)
   // ---------------------------------------------------------------------------
   const renderPanelContent = useCallback(
     (panelId: string, nodeId: string, zoom: number) => {
@@ -238,62 +259,26 @@ export default function App() {
       let content: React.ReactNode = null
       switch (panel.type) {
         case 'terminal':
-          content = (
-            <TerminalPanel
-              panelId={panelId}
-              workspaceId={selectedWorkspaceId}
-              nodeId={nodeId}
-            />
-          )
+          content = <TerminalPanel panelId={panelId} workspaceId={selectedWorkspaceId} nodeId={nodeId} />
           break
         case 'editor':
-          content = (
-            <EditorPanel
-              panelId={panelId}
-              workspaceId={selectedWorkspaceId}
-              nodeId={nodeId}
-              filePath={panel.filePath}
-            />
-          )
+          content = <EditorPanel panelId={panelId} workspaceId={selectedWorkspaceId} nodeId={nodeId} filePath={panel.filePath} />
           break
         case 'browser':
-          content = (
-            <BrowserPanel
-              panelId={panelId}
-              workspaceId={selectedWorkspaceId}
-              nodeId={nodeId}
-              url={panel.url}
-              zoomLevel={zoom}
-            />
-          )
+          content = <BrowserPanel panelId={panelId} workspaceId={selectedWorkspaceId} nodeId={nodeId} url={panel.url} zoomLevel={zoom} />
           break
         case 'git':
-          content = (
-            <GitPanel
-              panelId={panelId}
-              workspaceId={selectedWorkspaceId}
-              nodeId={nodeId}
-            />
-          )
+          content = <GitPanel panelId={panelId} workspaceId={selectedWorkspaceId} nodeId={nodeId} />
           break
         case 'fileExplorer':
-          content = (
-            <FileExplorerPanel
-              panelId={panelId}
-              workspaceId={selectedWorkspaceId}
-              nodeId={nodeId}
-            />
-          )
+          content = <FileExplorerPanel panelId={panelId} workspaceId={selectedWorkspaceId} nodeId={nodeId} />
           break
         case 'projectList':
-          content = (
-            <ProjectListPanel
-              panelId={panelId}
-              workspaceId={selectedWorkspaceId}
-              nodeId={nodeId}
-            />
-          )
+          content = <ProjectListPanel panelId={panelId} workspaceId={selectedWorkspaceId} nodeId={nodeId} />
           break
+        case 'canvas':
+          // Canvas panels should not be nested on another canvas — they only live in dock zones
+          return null
         default:
           return null
       }
@@ -307,45 +292,45 @@ export default function App() {
     [currentWorkspace, selectedWorkspaceId],
   )
 
+  /** Render a panel for use inside a dock zone (no canvas node wrapper) */
+  const renderDockPanel = useCallback(
+    (panelId: string) => {
+      if (!currentWorkspace) return null
+      const panel = currentWorkspace.panels[panelId]
+      if (!panel) return null
+
+      // Canvas panels get their own full canvas with renderPanelContent for nodes
+      if (panel.type === 'canvas') {
+        return (
+          <Suspense fallback={<div className="w-full h-full bg-[#1e1e1e] flex items-center justify-center text-zinc-500 text-sm">Loading...</div>}>
+            <CanvasPanel
+              panelId={panelId}
+              workspaceId={selectedWorkspaceId}
+              nodeId=""
+              renderPanelContent={renderPanelContent}
+            />
+          </Suspense>
+        )
+      }
+
+      // All other panels render directly
+      return renderPanelContent(panelId, '', 1)
+    },
+    [currentWorkspace, selectedWorkspaceId, renderPanelContent],
+  )
+
   return (
+    <CanvasStoreProvider store={useCanvasStore}>
     <div className="h-screen w-screen flex bg-canvas-bg" onDragOver={handleFileDragOver} onDrop={handleFileDrop}>
       {/* Sidebar */}
       <Sidebar isVisible={sidebarVisible} />
 
-      {/* Canvas workspace area */}
-      <div className="flex-1 relative overflow-hidden">
-        {/* Welcome page overlay when no panels exist */}
-        {nodeIds.length === 0 && (
-          <WelcomePage workspaceId={selectedWorkspaceId} />
-        )}
-
-        <Canvas onCreateAtPoint={onCreateAtPoint}>
-          {nodeIds.map((nodeId) => (
-            <CanvasNodeWrapper
-              key={nodeId}
-              nodeId={nodeId}
-              zoomLevel={zoomLevel}
-              renderPanelContent={renderPanelContent}
-            />
-          ))}
-        </Canvas>
-
-        {/* Minimap overlay */}
-        {showMinimap && <Minimap />}
-
-        {/* Toolbar overlay */}
-        <CanvasToolbar
-          zoom={zoomLevel}
-          onNewTerminal={onNewTerminal}
-          onNewBrowser={onNewBrowser}
-          onNewEditor={onNewEditor}
-          onZoomIn={onZoomIn}
-          onZoomOut={onZoomOut}
-        />
-
-        {/* Shortcut hint overlay */}
-        <ShortcutHintOverlay />
-      </div>
+      {/* Main window shell: all dock zones including center */}
+      <MainWindowShell
+        renderPanel={renderDockPanel}
+        getPanelTitle={getPanelTitle}
+        onClosePanel={handleDockClosePanel}
+      />
 
       {/* Right Sidebar */}
       <RightSidebar />
@@ -363,6 +348,8 @@ export default function App() {
       )}
 
       <ToastContainer />
+      <DragGhost />
     </div>
+    </CanvasStoreProvider>
   )
 }

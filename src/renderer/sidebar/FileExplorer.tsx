@@ -8,6 +8,31 @@ import { RotateCw } from 'lucide-react'
 import type { FileTreeNode as FileTreeNodeType } from '../../shared/types'
 import { FileTreeNode } from './FileTreeNode'
 import { useAppStore } from '../stores/appStore'
+import { useDockStore } from '../stores/dockStore'
+import type { DockLayoutNode } from '../../shared/types'
+
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+
+function findActivePanel(node: DockLayoutNode): string | null {
+  if (node.type === 'tabs') return node.panelIds[node.activeIndex] ?? null
+  for (const child of node.children) {
+    const result = findActivePanel(child)
+    if (result) return result
+  }
+  return null
+}
+
+function isCanvasActiveInCenter(): boolean {
+  const centerLayout = useDockStore.getState().zones.center.layout
+  if (!centerLayout) return false
+  const activePanelId = findActivePanel(centerLayout)
+  if (!activePanelId) return false
+  const appState = useAppStore.getState()
+  const ws = appState.workspaces.find((w) => w.id === appState.selectedWorkspaceId)
+  return ws?.panels[activePanelId]?.type === 'canvas'
+}
 
 // -----------------------------------------------------------------------------
 // Component
@@ -103,7 +128,10 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ rootPath }) => {
 
   const handleFileClick = useCallback(
     (filePath: string) => {
-      createEditor(selectedWorkspaceId, filePath)
+      const placement = isCanvasActiveInCenter()
+        ? undefined
+        : { target: 'dock' as const, zone: 'center' as const }
+      createEditor(selectedWorkspaceId, filePath, undefined, placement)
     },
     [createEditor, selectedWorkspaceId],
   )
@@ -162,6 +190,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ rootPath }) => {
               depth={0}
               gitFiles={gitFiles}
               onFileClick={handleFileClick}
+              onTreeChanged={handleReload}
             />
           ))}
         </div>

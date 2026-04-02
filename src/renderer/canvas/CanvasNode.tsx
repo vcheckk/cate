@@ -7,12 +7,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PanelType, NodeActivityState } from '../../shared/types'
 import { isMaximized as checkMaximized } from '../../shared/types'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreContext, useCanvasStoreApi } from '../stores/CanvasStoreContext'
 import { useAppStore, useSelectedWorkspace } from '../stores/appStore'
 import { useNodeDrag } from '../hooks/useNodeDrag'
 import { useNodeResize, detectEdge, getCursorForEdge } from '../hooks/useNodeResize'
 import CanvasNodeTitleBar from './CanvasNodeTitleBar'
 import CanvasNodeTabBar from './CanvasNodeTabBar'
+import SplitView from './SplitView'
 
 // -----------------------------------------------------------------------------
 // Props
@@ -108,21 +109,22 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
 }) => {
   ensureKeyframes()
 
+  const canvasApi = useCanvasStoreApi()
   const nodeRef = useRef<HTMLDivElement>(null)
   const [isHovered, setIsHovered] = useState(false)
   const [isAnimatingLayout, setIsAnimatingLayout] = useState(false)
   const animationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Read node geometry from store
-  const node = useCanvasStore((s) => s.nodes[nodeId])
-  const focusNode = useCanvasStore((s) => s.focusNode)
-  const removeNode = useCanvasStore((s) => s.removeNode)
-  const toggleMaximize = useCanvasStore((s) => s.toggleMaximize)
-  const isSelected = useCanvasStore((s) => s.selectedNodeIds.has(nodeId))
+  const node = useCanvasStoreContext((s) => s.nodes[nodeId])
+  const focusNode = useCanvasStoreContext((s) => s.focusNode)
+  const removeNode = useCanvasStoreContext((s) => s.removeNode)
+  const toggleMaximize = useCanvasStoreContext((s) => s.toggleMaximize)
+  const isSelected = useCanvasStoreContext((s) => s.selectedNodeIds.has(nodeId))
 
   // Hooks
-  const { handleDragStart, wasDragged } = useNodeDrag(nodeId, zoomLevel)
-  const { handleResizeStart, getCursor } = useNodeResize(nodeId, panelType, zoomLevel)
+  const { handleDragStart, wasDragged } = useNodeDrag(nodeId, zoomLevel, canvasApi)
+  const { handleResizeStart, getCursor } = useNodeResize(nodeId, panelType, zoomLevel, canvasApi)
 
   // Maximize state
   const maximized = node ? checkMaximized(node) : false
@@ -138,7 +140,7 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
       let innerRaf = 0
       const outerRaf = requestAnimationFrame(() => {
         innerRaf = requestAnimationFrame(() => {
-          useCanvasStore.getState().setNodeAnimationState(nodeId, 'idle')
+          canvasApi.getState().setNodeAnimationState(nodeId, 'idle')
         })
       })
       return () => {
@@ -150,7 +152,7 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
     if (node.animationState === 'exiting') {
       // Wait for the exit CSS transition to complete, then remove from store.
       const timer = setTimeout(() => {
-        useCanvasStore.getState().finalizeRemoveNode(nodeId)
+        canvasApi.getState().finalizeRemoveNode(nodeId)
       }, 200)
       animationTimerRef.current = timer
       return () => clearTimeout(timer)
@@ -164,11 +166,11 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
   const handleClick = useCallback((e: React.MouseEvent) => {
     if (wasDragged.current) return
     if (e.shiftKey) {
-      useCanvasStore.getState().toggleNodeSelection(nodeId)
+      canvasApi.getState().toggleNodeSelection(nodeId)
       return
     }
     // Select just this node (clears other selections) and focus
-    useCanvasStore.getState().selectNodes([nodeId])
+    canvasApi.getState().selectNodes([nodeId])
     if (!isFocused) {
       focusNode(nodeId)
     }
@@ -235,7 +237,7 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
   }, [toggleMaximize, nodeId])
 
   const handleTogglePin = useCallback(() => {
-    useCanvasStore.getState().togglePin(nodeId)
+    canvasApi.getState().togglePin(nodeId)
   }, [nodeId])
 
   /** Inline rename via prompt. */
@@ -251,7 +253,7 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
   const handleDuplicate = useCallback(() => {
     const wsId = useAppStore.getState().selectedWorkspaceId
     const appStore = useAppStore.getState()
-    const canvasStore = useCanvasStore.getState()
+    const canvasStore = canvasApi.getState()
 
     // Place the duplicate 40px to the right and below the current node
     const currentNode = canvasStore.nodes[nodeId]
@@ -276,29 +278,29 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
     const wsId = useAppStore.getState().selectedWorkspaceId
     const panelId = crypto.randomUUID()
     useAppStore.getState().addPanel(wsId, { id: panelId, type: panelType, title: 'Split', isDirty: false })
-    useCanvasStore.getState().splitNode(nodeId, 'horizontal', panelId)
+    canvasApi.getState().splitNode(nodeId, 'horizontal', panelId)
   }, [nodeId, panelType])
 
   const handleSplitVertical = useCallback(() => {
     const wsId = useAppStore.getState().selectedWorkspaceId
     const panelId = crypto.randomUUID()
     useAppStore.getState().addPanel(wsId, { id: panelId, type: panelType, title: 'Split', isDirty: false })
-    useCanvasStore.getState().splitNode(nodeId, 'vertical', panelId)
+    canvasApi.getState().splitNode(nodeId, 'vertical', panelId)
   }, [nodeId, panelType])
 
   const handleAddTab = useCallback(() => {
     const wsId = useAppStore.getState().selectedWorkspaceId
     const newPanelId = crypto.randomUUID()
     useAppStore.getState().addPanel(wsId, { id: newPanelId, type: 'editor', title: 'Untitled', isDirty: false })
-    useCanvasStore.getState().stackPanel(nodeId, newPanelId)
+    canvasApi.getState().stackPanel(nodeId, newPanelId)
   }, [nodeId])
 
   const handleSelectTab = useCallback((index: number) => {
-    useCanvasStore.getState().setActiveStackPanel(nodeId, index)
+    canvasApi.getState().setActiveStackPanel(nodeId, index)
   }, [nodeId])
 
   const handleCloseTab = useCallback((tabPanelId: string) => {
-    useCanvasStore.getState().unstackPanel(nodeId, tabPanelId)
+    canvasApi.getState().unstackPanel(nodeId, tabPanelId)
   }, [nodeId])
 
   // Stack state
@@ -432,10 +434,10 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
             e.stopPropagation()
             if (wasDragged.current) return
             if (e.shiftKey) {
-              useCanvasStore.getState().toggleNodeSelection(nodeId)
+              canvasApi.getState().toggleNodeSelection(nodeId)
               return
             }
-            useCanvasStore.getState().selectNodes([nodeId])
+            canvasApi.getState().selectNodes([nodeId])
             focusNode(nodeId)
           }}
           onDragEnter={(e) => {
@@ -464,63 +466,14 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
 
         {/* Panel content — split or single */}
         {node.split ? (
-          <div
-            style={{
-              position: 'relative',
-              width: '100%',
-              height: '100%',
-              display: 'flex',
-              flexDirection: node.split.direction === 'horizontal' ? 'row' : 'column',
-            }}
+          <SplitView
+            direction={node.split.direction}
+            ratio={node.split.ratio}
+            onRatioChange={(ratio) => canvasApi.getState().setSplitRatio(nodeId, ratio)}
+            splitContent={splitContent}
           >
-            {/* First panel */}
-            <div
-              style={{
-                [node.split.direction === 'horizontal' ? 'width' : 'height']: `${node.split.ratio * 100}%`,
-                overflow: 'hidden',
-                position: 'relative',
-                zIndex: 0,
-                flexShrink: 0,
-              }}
-            >
-              {children}
-            </div>
-
-            {/* Divider */}
-            <div
-              style={{
-                [node.split.direction === 'horizontal' ? 'width' : 'height']: 4,
-                backgroundColor: 'rgba(255,255,255,0.1)',
-                cursor: node.split.direction === 'horizontal' ? 'col-resize' : 'row-resize',
-                flexShrink: 0,
-              }}
-              onMouseDown={(e) => {
-                e.stopPropagation()
-                const split = node.split!
-                const startPos = split.direction === 'horizontal' ? e.clientX : e.clientY
-                const startRatio = split.ratio
-                const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect()
-                const totalSize = split.direction === 'horizontal' ? rect.width : rect.height
-
-                const handleMove = (ev: MouseEvent) => {
-                  const currentPos = split.direction === 'horizontal' ? ev.clientX : ev.clientY
-                  const delta = (currentPos - startPos) / totalSize
-                  useCanvasStore.getState().setSplitRatio(nodeId, startRatio + delta)
-                }
-                const handleUp = () => {
-                  window.removeEventListener('mousemove', handleMove)
-                  window.removeEventListener('mouseup', handleUp)
-                }
-                window.addEventListener('mousemove', handleMove)
-                window.addEventListener('mouseup', handleUp)
-              }}
-            />
-
-            {/* Second panel */}
-            <div style={{ flex: 1, overflow: 'hidden', position: 'relative', zIndex: 0 }}>
-              {splitContent}
-            </div>
-          </div>
+            {children}
+          </SplitView>
         ) : (
           <div style={{ position: 'relative', zIndex: 0, width: '100%', height: '100%' }}>
             {children}

@@ -3,6 +3,9 @@
 // Ported from CanvasLayoutEngine.swift.
 // =============================================================================
 
+import type { StoreApi } from 'zustand'
+// Type-only import — no runtime circular dependency with canvasStore
+import type { CanvasStore } from '../stores/canvasStore'
 import type { Point, Size, Rect, PanelType } from '../../shared/types'
 import { PANEL_DEFAULT_SIZES, PANEL_MINIMUM_SIZES } from '../../shared/types'
 
@@ -318,6 +321,35 @@ export function autoLayout(
 // -----------------------------------------------------------------------------
 // Overlap detection
 // -----------------------------------------------------------------------------
+
+/**
+ * Snap a node to grid on release (shared by drag and resize mouseUp handlers).
+ * Reads node state from the store, computes snapped position, and applies it.
+ */
+export function snapNodeToGrid(
+  canvasStoreApi: StoreApi<CanvasStore>,
+  nodeId: string,
+  gridSpacing: number,
+  includeRegions: boolean,
+): void {
+  const state = canvasStoreApi.getState()
+  const node = state.nodes[nodeId]
+  if (!node) return
+
+  const nodeRect: Rect = { origin: node.origin, size: node.size }
+  const neighbors: Rect[] = Object.values(state.nodes)
+    .filter((n) => n.id !== nodeId)
+    .map((n) => ({ origin: n.origin, size: n.size }))
+
+  if (includeRegions) {
+    for (const r of Object.values(state.regions)) {
+      neighbors.push({ origin: r.origin, size: r.size })
+    }
+  }
+
+  const snappedOrigin = snap(nodeRect, neighbors, gridSpacing, 8)
+  canvasStoreApi.getState().moveNode(nodeId, snappedOrigin)
+}
 
 /** Axis-aligned rectangle overlap check. */
 export function rectsOverlap(a: Rect, b: Rect): boolean {

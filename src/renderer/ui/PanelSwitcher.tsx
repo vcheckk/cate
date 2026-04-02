@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useUIStore } from '../stores/uiStore'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreContext, useCanvasStoreApi } from '../stores/CanvasStoreContext'
 import { useSelectedWorkspace } from '../stores/appStore'
 import type { PanelType } from '../../shared/types'
 
@@ -12,6 +12,7 @@ function panelColor(type: PanelType): string {
     case 'git': return '#FF3B30'
     case 'fileExplorer': return '#5AC8FA'
     case 'projectList': return '#FFD60A'
+    case 'canvas': return '#BF5AF2'
   }
 }
 
@@ -80,8 +81,9 @@ function useCroppedThumbnails(
 export function PanelSwitcher() {
   const show = useUIStore((s) => s.showPanelSwitcher)
   const pageScreenshot = useUIStore((s) => s.panelSwitcherScreenshot)
-  const nodes = useCanvasStore((s) => s.nodes)
-  const focusedNodeId = useCanvasStore((s) => s.focusedNodeId)
+  const canvasApi = useCanvasStoreApi()
+  const nodes = useCanvasStoreContext((s) => s.nodes)
+  const focusedNodeId = useCanvasStoreContext((s) => s.focusedNodeId)
   const workspace = useSelectedWorkspace()
 
   const nodeList = Object.values(nodes).sort((a, b) => a.creationIndex - b.creationIndex)
@@ -112,7 +114,7 @@ export function PanelSwitcher() {
   const selectItem = useCallback((index: number) => {
     const node = nodeList[index]
     if (!node) return
-    useCanvasStore.getState().focusAndCenter(node.id)
+    canvasApi.getState().focusAndCenter(node.id)
     close()
   }, [nodeList, close])
 

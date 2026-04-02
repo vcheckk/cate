@@ -4,10 +4,11 @@
 // =============================================================================
 
 import { useCallback, useRef } from 'react'
-import { useCanvasStore } from '../stores/canvasStore'
+import type { StoreApi } from 'zustand'
+import type { CanvasStore } from '../stores/canvasStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { minimumSize, snap } from '../canvas/layoutEngine'
-import type { PanelType, Point, Size, Rect } from '../../shared/types'
+import { minimumSize, snapNodeToGrid } from '../canvas/layoutEngine'
+import type { PanelType, Point, Size } from '../../shared/types'
 
 interface PendingResize {
   origin: Point
@@ -108,6 +109,7 @@ export function useNodeResize(
   nodeId: string,
   panelType: PanelType,
   zoomLevel: number,
+  canvasStoreApi: StoreApi<CanvasStore>,
 ): UseNodeResizeReturn {
   const resizeStateRef = useRef<ResizeState | null>(null)
   const isResizingRef = useRef(false)
@@ -122,7 +124,7 @@ export function useNodeResize(
       e.preventDefault()
       e.stopPropagation()
 
-      const node = useCanvasStore.getState().nodes[nodeId]
+      const node = canvasStoreApi.getState().nodes[nodeId]
       if (!node || node.isPinned) return
 
       resizeStateRef.current = {
@@ -139,7 +141,7 @@ export function useNodeResize(
         const rs = resizeStateRef.current
         if (!rs) return
 
-        const zoom = useCanvasStore.getState().zoomLevel
+        const zoom = canvasStoreApi.getState().zoomLevel
         const deltaX = (ev.clientX - rs.startClientX) / zoom
         const deltaY = (ev.clientY - rs.startClientY) / zoom
 
@@ -223,7 +225,7 @@ export function useNodeResize(
             const pending = pendingResize.current
             if (!pending) return
 
-            useCanvasStore.getState().resizeNode(
+            canvasStoreApi.getState().resizeNode(
               nodeId,
               pending.size,
               pending.origin,
@@ -246,7 +248,7 @@ export function useNodeResize(
           rafId.current = 0
         }
         if (pendingResize.current) {
-          useCanvasStore.getState().resizeNode(
+          canvasStoreApi.getState().resizeNode(
             nodeId,
             pendingResize.current.size,
             pendingResize.current.origin,
@@ -257,22 +259,7 @@ export function useNodeResize(
         // Snap to grid if enabled
         const settings = useSettingsStore.getState()
         if (settings.snapToGridEnabled) {
-          const state = useCanvasStore.getState()
-          const node = state.nodes[nodeId]
-          if (node) {
-            const nodeRect: Rect = { origin: node.origin, size: node.size }
-            const neighbors: Rect[] = Object.values(state.nodes)
-              .filter((n) => n.id !== nodeId)
-              .map((n) => ({ origin: n.origin, size: n.size }))
-
-            const snappedOrigin = snap(
-              nodeRect,
-              neighbors,
-              settings.gridSpacing,
-              8,
-            )
-            useCanvasStore.getState().moveNode(nodeId, snappedOrigin)
-          }
+          snapNodeToGrid(canvasStoreApi, nodeId, settings.gridSpacing, false)
         }
 
         resizeStateRef.current = null

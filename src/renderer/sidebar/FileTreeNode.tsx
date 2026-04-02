@@ -3,8 +3,9 @@
 // Ported from FileTreeNodeView in FileExplorerView.swift + FileTreeNode.swift
 // =============================================================================
 
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useRef, useState } from 'react'
 import type { FileTreeNode as FileTreeNodeType } from '../../shared/types'
+import ContextMenu, { type ContextMenuItem } from '../ui/ContextMenu'
 
 // -----------------------------------------------------------------------------
 // Icon mapping — extension to inline SVG icons with colors
@@ -172,6 +173,7 @@ interface FileTreeNodeProps {
   depth: number
   gitFiles?: Set<string>
   onFileClick: (path: string) => void
+  onTreeChanged?: () => void
 }
 
 export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
@@ -179,15 +181,39 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
   depth,
   gitFiles,
   onFileClick,
+  onTreeChanged,
 }) => {
   const [isExpanded, setIsExpanded] = useState(node.isExpanded)
   const [children, setChildren] = useState<FileTreeNodeType[]>(node.children)
   const [isLoading, setIsLoading] = useState(false)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [isCreating, setIsCreating] = useState<'file' | 'folder' | null>(null)
+  const [renameValue, setRenameValue] = useState(node.name)
+  const [createValue, setCreateValue] = useState('')
+  const renameInputRef = useRef<HTMLInputElement>(null)
+  const createInputRef = useRef<HTMLInputElement>(null)
 
   // Determine if this node should be dimmed (not in git tracked files)
   const isDimmed = gitFiles != null && !node.isDirectory && !gitFiles.has(node.path)
 
   const iconDef = getFileIcon(node.fileExtension, node.isDirectory, isExpanded)
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+
+  const reloadChildren = useCallback(async () => {
+    if (!window.electronAPI || !node.isDirectory) return
+    try {
+      const entries = await window.electronAPI.fsReadDir(node.path)
+      setChildren(entries)
+    } catch {
+      /* ignore */
+    }
+  }, [node.path, node.isDirectory])
+
+  const parentDir = node.isDirectory ? node.path : node.path.substring(0, node.path.lastIndexOf('/'))
 
   // ---------------------------------------------------------------------------
   // Handlers
@@ -214,6 +240,105 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
     }
   }, [node, isExpanded, children.length, onFileClick])
 
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({ x: e.clientX, y: e.clientY })
+  }, [])
+
+  // --- Rename ---
+  const startRename = useCallback(() => {
+    setRenameValue(node.name)
+    setIsRenaming(true)
+    setTimeout(() => {
+      const input = renameInputRef.current
+      if (input) {
+        input.focus()
+        const dotIndex = node.name.lastIndexOf('.')
+        input.setSelectionRange(0, dotIndex > 0 && !node.isDirectory ? dotIndex : node.name.length)
+      }
+    }, 0)
+  }, [node.name, node.isDirectory])
+
+  const commitRename = useCallback(async () => {
+    setIsRenaming(false)
+    const trimmed = renameValue.trim()
+    if (!trimmed || trimmed === node.name || !window.electronAPI) return
+    const newPath = node.path.substring(0, node.path.lastIndexOf('/') + 1) + trimmed
+    try {
+      await window.electronAPI.fsRename(node.path, newPath)
+      onTreeChanged?.()
+    } catch {
+      /* ignore */
+    }
+  }, [renameValue, node.name, node.path, onTreeChanged])
+
+  // --- Create new file/folder ---
+  const startCreate = useCallback((type: 'file' | 'folder') => {
+    if (node.isDirectory) {
+      setIsExpanded(true)
+      if (children.length === 0) {
+        window.electronAPI?.fsReadDir(node.path).then(setChildren).catch(() => {})
+      }
+    }
+    setCreateValue('')
+    setIsCreating(type)
+    setTimeout(() => createInputRef.current?.focus(), 0)
+  }, [node.isDirectory, node.path, children.length])
+
+  const commitCreate = useCallback(async () => {
+    const type = isCreating
+    setIsCreating(null)
+    const trimmed = createValue.trim()
+    if (!trimmed || !window.electronAPI || !type) return
+    const dir = node.isDirectory ? node.path : parentDir
+    const newPath = dir + '/' + trimmed
+    try {
+      if (type === 'folder') {
+        await window.electronAPI.fsMkdir(newPath)
+      } else {
+        await window.electronAPI.fsWriteFile(newPath, '')
+      }
+      if (node.isDirectory) {
+        await reloadChildren()
+      }
+      onTreeChanged?.()
+    } catch {
+      /* ignore */
+    }
+  }, [isCreating, createValue, node.isDirectory, node.path, parentDir, reloadChildren, onTreeChanged])
+
+  // --- Delete ---
+  const handleDelete = useCallback(async () => {
+    if (!window.electronAPI) return
+    const confirmed = window.confirm(`Delete "${node.name}"?${node.isDirectory ? ' This will delete all contents.' : ''}`)
+    if (!confirmed) return
+    try {
+      await window.electronAPI.fsDelete(node.path)
+      onTreeChanged?.()
+    } catch {
+      /* ignore */
+    }
+  }, [node.name, node.path, node.isDirectory, onTreeChanged])
+
+  // --- Context menu items ---
+  const contextMenuItems: ContextMenuItem[] = []
+  if (!node.isDirectory) {
+    contextMenuItems.push({ label: 'Open', onClick: () => onFileClick(node.path) })
+  }
+  contextMenuItems.push(
+    { label: 'New File…', onClick: () => startCreate('file') },
+    { label: 'New Folder…', onClick: () => startCreate('folder') },
+    { label: '', separator: true, onClick: () => {} },
+    { label: 'Rename…', onClick: startRename },
+    { label: 'Copy Path', onClick: () => navigator.clipboard.writeText(node.path) },
+    { label: 'Copy Name', onClick: () => navigator.clipboard.writeText(node.name) },
+    { label: '', separator: true, onClick: () => {} },
+    { label: 'Reveal in Finder', onClick: () => window.electronAPI?.shellShowInFolder(node.path) },
+    { label: '', separator: true, onClick: () => {} },
+    { label: 'Delete', onClick: handleDelete, danger: true },
+  )
+
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
@@ -227,6 +352,7 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
         }`}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         onClick={handleClick}
+        onContextMenu={handleContextMenu}
         draggable
         onDragStart={(e: React.DragEvent) => {
           e.dataTransfer.setData('application/cate-file', node.path)
@@ -250,14 +376,57 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
           {iconDef.icon}
         </span>
 
-        {/* Name */}
-        <span className="truncate">{node.name}</span>
+        {/* Name or rename input */}
+        {isRenaming ? (
+          <input
+            ref={renameInputRef}
+            className="flex-1 min-w-0 bg-[#2a2a30] text-white/90 text-sm px-1 rounded border border-blue-500/50 outline-none"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRename()
+              if (e.key === 'Escape') setIsRenaming(false)
+              e.stopPropagation()
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span className="truncate">{node.name}</span>
+        )}
 
         {/* Loading indicator for lazy-loaded directories */}
         {isLoading && (
           <span className="text-xs text-white/30 ml-auto">...</span>
         )}
       </div>
+
+      {/* Inline create input (shows as first child for directories) */}
+      {node.isDirectory && isExpanded && isCreating && (
+        <div
+          className="h-7 flex items-center gap-1.5 px-2"
+          style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}
+        >
+          <span className="flex-shrink-0 w-3" />
+          <span className="flex-shrink-0" style={{ color: isCreating === 'folder' ? '#E2B855' : '#9CA3AF' }}>
+            {isCreating === 'folder' ? <FolderIcon /> : <FileIcon />}
+          </span>
+          <input
+            ref={createInputRef}
+            className="flex-1 min-w-0 bg-[#2a2a30] text-white/90 text-sm px-1 rounded border border-blue-500/50 outline-none"
+            value={createValue}
+            placeholder={isCreating === 'folder' ? 'folder name' : 'file name'}
+            onChange={(e) => setCreateValue(e.target.value)}
+            onBlur={commitCreate}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitCreate()
+              if (e.key === 'Escape') setIsCreating(null)
+              e.stopPropagation()
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
 
       {/* Expanded children */}
       {node.isDirectory && isExpanded && (
@@ -269,9 +438,20 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
               depth={depth + 1}
               gitFiles={gitFiles}
               onFileClick={onFileClick}
+              onTreeChanged={onTreeChanged}
             />
           ))}
         </div>
+      )}
+
+      {/* Context menu */}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenuItems}
+          onClose={() => setContextMenu(null)}
+        />
       )}
     </div>
   )

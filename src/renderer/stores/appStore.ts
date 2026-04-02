@@ -1,6 +1,7 @@
 // =============================================================================
 // App Store — Zustand state for workspaces and panel management.
-// Ported from Workspace.swift + AppState
+// Workspace metadata is delegated to the main process (source of truth).
+// Canvas/panel state remains local to each renderer window.
 // =============================================================================
 
 import { create } from 'zustand'
@@ -8,14 +9,74 @@ import { useStoreWithEqualityFn } from 'zustand/traditional'
 import { shallow } from 'zustand/shallow'
 import type {
   WorkspaceState,
+  WorkspaceInfo,
   PanelState,
   PanelType,
   Point,
   Size,
+  DockZonePosition,
 } from '../../shared/types'
 import { PANEL_DEFAULT_SIZES, ZOOM_DEFAULT } from '../../shared/types'
-import { useCanvasStore } from './canvasStore'
+import type { CanvasNodeId, CanvasNodeState, CanvasRegion } from '../../shared/types'
+import type { StoreApi } from 'zustand'
+import type { CanvasStore } from './canvasStore'
 import { terminalRegistry } from '../lib/terminalRegistry'
+import { useDockStore } from './dockStore'
+
+// -----------------------------------------------------------------------------
+// Canvas operations callback — injected at init to decouple from canvasStore
+// -----------------------------------------------------------------------------
+
+export interface CanvasOperations {
+  addNodeAndFocus: (panelId: string, panelType: PanelType, position?: Point) => void
+  removeNodeForPanel: (panelId: string) => void
+  loadWorkspaceCanvas: (
+    nodes: Record<CanvasNodeId, CanvasNodeState>,
+    viewportOffset: Point,
+    zoomLevel: number,
+    focusedNodeId: CanvasNodeId | null,
+    regions?: Record<string, CanvasRegion>,
+  ) => void
+  syncCanvasSnapshot: () => {
+    nodes: Record<CanvasNodeId, CanvasNodeState>
+    regions: Record<string, CanvasRegion>
+    viewportOffset: Point
+    zoomLevel: number
+    focusedNodeId: CanvasNodeId | null
+  }
+  clearAllNodes: () => void
+  focusPanelNode: (panelId: string) => void
+  /** Access the underlying store API (needed by session restore) */
+  storeApi: StoreApi<CanvasStore>
+}
+
+let canvasOps: CanvasOperations | null = null
+export function setCanvasOperations(ops: CanvasOperations) { canvasOps = ops }
+export function getCanvasOperations(): CanvasOperations | null { return canvasOps }
+
+// Registry for multi-canvas support — maps canvas panel IDs to their operations
+const canvasOpsRegistry = new Map<string, CanvasOperations>()
+let activeCanvasPanelId: string | null = null
+
+export function registerCanvasOps(canvasPanelId: string, ops: CanvasOperations) {
+  canvasOpsRegistry.set(canvasPanelId, ops)
+}
+export function unregisterCanvasOps(canvasPanelId: string) {
+  canvasOpsRegistry.delete(canvasPanelId)
+  if (activeCanvasPanelId === canvasPanelId) activeCanvasPanelId = null
+}
+export function setActiveCanvasPanelId(canvasPanelId: string) {
+  activeCanvasPanelId = canvasPanelId
+}
+
+/** Returns the CanvasOperations for the currently active canvas, falling back to the primary */
+function getActiveCanvasOps(): CanvasOperations | null {
+  if (activeCanvasPanelId) {
+    const ops = canvasOpsRegistry.get(activeCanvasPanelId)
+    if (ops) return ops
+  }
+  return canvasOps
+}
 import { deferredSnapshots, restoreDeferredWorkspace } from '../lib/session'
 
 // -----------------------------------------------------------------------------
@@ -59,6 +120,35 @@ function createDefaultWorkspace(name?: string, rootPath?: string): WorkspaceStat
 }
 
 // -----------------------------------------------------------------------------
+// Main-process sync helpers (fire-and-forget — local state is optimistic)
+// -----------------------------------------------------------------------------
+
+function syncCreateToMain(ws: WorkspaceState): void {
+  window.electronAPI.workspaceCreate({
+    name: ws.name,
+    rootPath: ws.rootPath,
+    id: ws.id,
+  }).catch(() => {})
+}
+
+function syncUpdateToMain(id: string, changes: Partial<Omit<WorkspaceInfo, 'id'>>): void {
+  window.electronAPI.workspaceUpdate(id, changes).catch(() => {})
+}
+
+function syncRemoveFromMain(id: string): void {
+  window.electronAPI.workspaceRemove(id).catch(() => {})
+}
+
+// -----------------------------------------------------------------------------
+// Panel placement — specifies where a newly created panel should go
+// -----------------------------------------------------------------------------
+
+export type PanelPlacement =
+  | { target: 'canvas'; position?: Point }
+  | { target: 'dock'; zone: DockZonePosition }
+  | { target: 'auto' } // default: canvas
+
+// -----------------------------------------------------------------------------
 // Store interface
 // -----------------------------------------------------------------------------
 
@@ -73,14 +163,15 @@ interface AppStoreActions {
   selectWorkspace: (id: string) => void
   removeWorkspace: (id: string) => void
 
-  // Panel creation — each adds a PanelState to the workspace AND a CanvasNode
-  createTerminal: (workspaceId: string, initialInput?: string, position?: Point) => string
-  createBrowser: (workspaceId: string, url?: string, position?: Point) => string
-  createEditor: (workspaceId: string, filePath?: string, position?: Point) => string
-  createDiffEditor: (workspaceId: string, filePath: string, diffMode: 'staged' | 'working', position?: Point) => string
-  createGit: (workspaceId: string, position?: Point) => string
-  createFileExplorer: (workspaceId: string, position?: Point) => string
-  createProjectList: (workspaceId: string, position?: Point) => string
+  // Panel creation — each adds a PanelState to the workspace AND places it
+  createTerminal: (workspaceId: string, initialInput?: string, position?: Point, placement?: PanelPlacement) => string
+  createBrowser: (workspaceId: string, url?: string, position?: Point, placement?: PanelPlacement) => string
+  createEditor: (workspaceId: string, filePath?: string, position?: Point, placement?: PanelPlacement) => string
+  createDiffEditor: (workspaceId: string, filePath: string, diffMode: 'staged' | 'working', position?: Point, placement?: PanelPlacement) => string
+  createGit: (workspaceId: string, position?: Point, placement?: PanelPlacement) => string
+  createFileExplorer: (workspaceId: string, position?: Point, placement?: PanelPlacement) => string
+  createProjectList: (workspaceId: string, position?: Point, placement?: PanelPlacement) => string
+  createCanvas: (workspaceId: string, position?: Point, placement?: PanelPlacement) => string
 
   // Panel management
   closePanel: (workspaceId: string, panelId: string) => void
@@ -103,6 +194,9 @@ interface AppStoreActions {
   duplicateWorkspace: (wsId: string) => string
   closeAllPanels: (wsId: string) => void
   reorderWorkspaces: (fromIndex: number, toIndex: number) => void
+
+  // Cross-window sync: merge metadata from main-process broadcast
+  mergeWorkspaceInfos: (infos: WorkspaceInfo[]) => void
 }
 
 export type AppStore = AppStoreState & AppStoreActions
@@ -110,6 +204,31 @@ export type AppStore = AppStoreState & AppStoreActions
 // -----------------------------------------------------------------------------
 // Store
 // -----------------------------------------------------------------------------
+
+/** Place a panel based on placement target. Returns true if handled (dock), false if canvas (default). */
+function placePanel(
+  panelId: string,
+  panelType: PanelType,
+  placement: PanelPlacement | undefined,
+  position: Point | undefined,
+  isActiveWorkspace: boolean,
+): void {
+  // Canvas panels go to the center dock zone, not onto a canvas as a node
+  if (panelType === 'canvas') {
+    useDockStore.getState().dockPanel(panelId, 'center')
+    return
+  }
+  if (placement?.target === 'dock') {
+    useDockStore.getState().dockPanel(panelId, placement.zone)
+    return
+  }
+  // Default: place on canvas (target === 'canvas' or 'auto' or undefined)
+  if (isActiveWorkspace) {
+    const canvasPosition = placement?.target === 'canvas' ? placement.position ?? position : position
+    const ops = getActiveCanvasOps()
+    ops?.addNodeAndFocus(panelId, panelType, canvasPosition)
+  }
+}
 
 export const useAppStore = create<AppStore>((set, get) => ({
   // --- State ---
@@ -122,6 +241,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
   addWorkspace(name?, rootPath?) {
     const ws = createDefaultWorkspace(name, rootPath)
     const isFirst = get().workspaces.length === 0
+
+    // Copy canvas panel entries from an existing workspace so the shared dock
+    // center zone canvas panel is present in the new workspace's panels map.
+    if (!isFirst) {
+      const existing = get().workspaces[0]
+      if (existing) {
+        for (const panel of Object.values(existing.panels)) {
+          if (panel.type === 'canvas') {
+            ws.panels[panel.id] = { ...panel }
+          }
+        }
+      }
+    }
+
     set((state) => ({
       workspaces: [...state.workspaces, ws],
       // Auto-select if this is the first workspace
@@ -129,7 +262,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }))
     // When auto-selected as the first workspace, load its (empty) canvas
     if (isFirst) {
-      useCanvasStore.getState().loadWorkspaceCanvas(
+      canvasOps?.loadWorkspaceCanvas(
         ws.canvasNodes,
         ws.viewportOffset,
         ws.zoomLevel,
@@ -137,6 +270,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         ws.regions,
       )
     }
+    // Sync to main process
+    syncCreateToMain(ws)
     return ws.id
   },
 
@@ -153,7 +288,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     // Load the new workspace's canvas state into the canvas store
     const ws = get().workspaces.find((w) => w.id === id)
     if (ws) {
-      useCanvasStore.getState().loadWorkspaceCanvas(
+      canvasOps?.loadWorkspaceCanvas(
         ws.canvasNodes,
         ws.viewportOffset,
         ws.zoomLevel,
@@ -161,9 +296,48 @@ export const useAppStore = create<AppStore>((set, get) => ({
         ws.regions,
       )
 
+      // Restore dock state for the incoming workspace.
+      // If the workspace has saved dock state, restore it. Otherwise reset
+      // the dock to a clean state so panels from the previous workspace
+      // don't bleed through. Preserve the center zone (shared canvas panel).
+      if (ws.dockState) {
+        useDockStore.getState().restoreSnapshot(ws.dockState)
+      } else {
+        const currentDock = useDockStore.getState()
+        const centerZone = currentDock.zones.center
+        // Build a minimal locations map containing only center-zone panels
+        const centerLocations: Record<string, import('../../shared/types').PanelLocation> = {}
+        if (centerZone.layout) {
+          const collectPanelIds = (node: import('../../shared/types').DockLayoutNode): string[] => {
+            if (node.type === 'tabs') return [...node.panelIds]
+            return node.children.flatMap(collectPanelIds)
+          }
+          for (const pid of collectPanelIds(centerZone.layout)) {
+            const loc = currentDock.panelLocations[pid]
+            if (loc) centerLocations[pid] = loc
+          }
+        }
+        useDockStore.getState().restoreSnapshot({
+          zones: {
+            left: { position: 'left', visible: false, size: 260, layout: null },
+            right: { position: 'right', visible: false, size: 260, layout: null },
+            bottom: { position: 'bottom', visible: false, size: 240, layout: null },
+            center: centerZone,
+          },
+          locations: centerLocations,
+        })
+      }
+
       // Check for deferred restore (lazy workspace loading)
       if (deferredSnapshots.has(id)) {
-        restoreDeferredWorkspace(id)
+        restoreDeferredWorkspace(id, canvasOps?.storeApi)
+      }
+
+      // Ensure the center dock zone has a canvas panel — covers the case where
+      // a brand new workspace was created before any canvas panel existed yet.
+      const centerAfter = useDockStore.getState().zones.center
+      if (!centerAfter.layout) {
+        get().createCanvas(id)
       }
     }
   },
@@ -181,6 +355,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       if (remaining.length === 0) {
         // Always keep at least one workspace
         const fresh = createDefaultWorkspace()
+        syncCreateToMain(fresh)
         return {
           workspaces: [fresh],
           selectedWorkspaceId: fresh.id,
@@ -194,24 +369,30 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
     })
 
-    // If the removed workspace was selected, load the new workspace's canvas
+    // If the removed workspace was selected, load the new workspace's canvas and dock
     if (wasSelected) {
       const newWs = get().workspaces.find((w) => w.id === get().selectedWorkspaceId)
       if (newWs) {
-        useCanvasStore.getState().loadWorkspaceCanvas(
+        canvasOps?.loadWorkspaceCanvas(
           newWs.canvasNodes,
           newWs.viewportOffset,
           newWs.zoomLevel,
           newWs.focusedNodeId,
           newWs.regions,
         )
+        if (newWs.dockState) {
+          useDockStore.getState().restoreSnapshot(newWs.dockState)
+        }
       }
     }
+
+    // Sync to main process
+    syncRemoveFromMain(id)
   },
 
   // --- Panel creation ---
 
-  createTerminal(workspaceId, initialInput?, position?) {
+  createTerminal(workspaceId, initialInput?, position?, placement?) {
     const panelId = generateId()
     const panel: PanelState = {
       id: panelId,
@@ -220,7 +401,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
       isDirty: false,
     }
 
-    // Add to workspace panels
     set((state) => ({
       workspaces: state.workspaces.map((ws) =>
         ws.id === workspaceId
@@ -229,16 +409,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
       ),
     }))
 
-    // Add canvas node (only if this is the active workspace)
-    if (workspaceId === get().selectedWorkspaceId) {
-      const nodeId = useCanvasStore.getState().addNode(panelId, 'terminal', position)
-      useCanvasStore.getState().focusAndCenter(nodeId)
-    }
+    placePanel(panelId, 'terminal', placement, position, workspaceId === get().selectedWorkspaceId)
 
     return panelId
   },
 
-  createBrowser(workspaceId, url?, position?) {
+  createBrowser(workspaceId, url?, position?, placement?) {
     const panelId = generateId()
     const panel: PanelState = {
       id: panelId,
@@ -256,15 +432,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
       ),
     }))
 
-    if (workspaceId === get().selectedWorkspaceId) {
-      const nodeId = useCanvasStore.getState().addNode(panelId, 'browser', position)
-      useCanvasStore.getState().focusAndCenter(nodeId)
-    }
+    placePanel(panelId, 'browser', placement, position, workspaceId === get().selectedWorkspaceId)
 
     return panelId
   },
 
-  createEditor(workspaceId, filePath?, position?) {
+  createEditor(workspaceId, filePath?, position?, placement?) {
     const panelId = generateId()
     const fileName = filePath ? filePath.split('/').pop() ?? 'Untitled' : 'Untitled'
     const panel: PanelState = {
@@ -283,15 +456,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
       ),
     }))
 
-    if (workspaceId === get().selectedWorkspaceId) {
-      const nodeId = useCanvasStore.getState().addNode(panelId, 'editor', position)
-      useCanvasStore.getState().focusAndCenter(nodeId)
-    }
+    placePanel(panelId, 'editor', placement, position, workspaceId === get().selectedWorkspaceId)
 
     return panelId
   },
 
-  createDiffEditor(workspaceId, filePath, diffMode, position?) {
+  createDiffEditor(workspaceId, filePath, diffMode, position?, placement?) {
     const panelId = generateId()
     const fileName = filePath.split('/').pop() ?? 'Untitled'
     const label = diffMode === 'staged' ? 'Staged' : 'Working'
@@ -312,15 +482,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
       ),
     }))
 
-    if (workspaceId === get().selectedWorkspaceId) {
-      const nodeId = useCanvasStore.getState().addNode(panelId, 'editor', position)
-      useCanvasStore.getState().focusAndCenter(nodeId)
-    }
+    placePanel(panelId, 'editor', placement, position, workspaceId === get().selectedWorkspaceId)
 
     return panelId
   },
 
-  createGit(workspaceId, position?) {
+  createGit(workspaceId, position?, placement?) {
     const panelId = generateId()
     const panel: PanelState = {
       id: panelId,
@@ -335,14 +502,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
           : ws,
       ),
     }))
-    if (workspaceId === get().selectedWorkspaceId) {
-      const nodeId = useCanvasStore.getState().addNode(panelId, 'git', position)
-      useCanvasStore.getState().focusAndCenter(nodeId)
-    }
+    placePanel(panelId, 'git', placement, position, workspaceId === get().selectedWorkspaceId)
     return panelId
   },
 
-  createFileExplorer(workspaceId, position?) {
+  createFileExplorer(workspaceId, position?, placement?) {
     const panelId = generateId()
     const panel: PanelState = {
       id: panelId,
@@ -357,14 +521,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
           : ws,
       ),
     }))
-    if (workspaceId === get().selectedWorkspaceId) {
-      const nodeId = useCanvasStore.getState().addNode(panelId, 'fileExplorer', position)
-      useCanvasStore.getState().focusAndCenter(nodeId)
-    }
+    placePanel(panelId, 'fileExplorer', placement, position, workspaceId === get().selectedWorkspaceId)
     return panelId
   },
 
-  createProjectList(workspaceId, position?) {
+  createProjectList(workspaceId, position?, placement?) {
     const panelId = generateId()
     const panel: PanelState = {
       id: panelId,
@@ -379,10 +540,26 @@ export const useAppStore = create<AppStore>((set, get) => ({
           : ws,
       ),
     }))
-    if (workspaceId === get().selectedWorkspaceId) {
-      const nodeId = useCanvasStore.getState().addNode(panelId, 'projectList', position)
-      useCanvasStore.getState().focusAndCenter(nodeId)
+    placePanel(panelId, 'projectList', placement, position, workspaceId === get().selectedWorkspaceId)
+    return panelId
+  },
+
+  createCanvas(workspaceId, position?, placement?) {
+    const panelId = generateId()
+    const panel: PanelState = {
+      id: panelId,
+      type: 'canvas',
+      title: 'Canvas',
+      isDirty: false,
     }
+    set((state) => ({
+      workspaces: state.workspaces.map((ws) =>
+        ws.id === workspaceId
+          ? { ...ws, panels: { ...ws.panels, [panelId]: panel } }
+          : ws,
+      ),
+    }))
+    placePanel(panelId, 'canvas', placement, position, workspaceId === get().selectedWorkspaceId)
     return panelId
   },
 
@@ -405,15 +582,25 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }),
     }))
 
-    // Remove associated canvas node
-    if (workspaceId === get().selectedWorkspaceId) {
-      const canvasState = useCanvasStore.getState()
-      const nodeId = canvasState.nodeForPanel(panelId)
-      if (nodeId) {
-        canvasState.removeNode(nodeId)
+    // Remove from dock if docked, otherwise remove canvas node
+    const dockLocation = useDockStore.getState().panelLocations[panelId]
+    if (dockLocation?.type === 'dock') {
+      useDockStore.getState().undockPanel(panelId)
+    } else if (workspaceId === get().selectedWorkspaceId) {
+      // Try all registered canvas stores (panel could be on any canvas)
+      let removed = false
+      for (const ops of canvasOpsRegistry.values()) {
+        const nodeId = ops.storeApi.getState().nodeForPanel(panelId)
+        if (nodeId) {
+          ops.removeNodeForPanel(panelId)
+          removed = true
+          break
+        }
       }
+      if (!removed) canvasOps?.removeNodeForPanel(panelId)
     }
-
+    // Clean up location tracking
+    useDockStore.getState().removePanelLocation(panelId)
   },
 
   updatePanelTitle(workspaceId, panelId, title) {
@@ -479,18 +666,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   syncCanvasToWorkspace(workspaceId) {
-    const canvas = useCanvasStore.getState()
+    const snapshot = canvasOps?.syncCanvasSnapshot()
+    if (!snapshot) return
+
+    // Also snapshot dock state so it's saved per workspace
+    const dockSnapshot = useDockStore.getState().getSnapshot()
 
     set((state) => ({
       workspaces: state.workspaces.map((ws) =>
         ws.id === workspaceId
           ? {
               ...ws,
-              canvasNodes: { ...canvas.nodes },
-              regions: { ...canvas.regions },
-              viewportOffset: { ...canvas.viewportOffset },
-              zoomLevel: canvas.zoomLevel,
-              focusedNodeId: canvas.focusedNodeId,
+              canvasNodes: snapshot.nodes,
+              regions: snapshot.regions,
+              viewportOffset: snapshot.viewportOffset,
+              zoomLevel: snapshot.zoomLevel,
+              focusedNodeId: snapshot.focusedNodeId,
+              dockState: dockSnapshot,
             }
           : ws,
       ),
@@ -502,13 +694,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set((state) => ({
       workspaces: state.workspaces.map((ws) => {
         if (ws.id !== wsId) return ws
-        return {
-          ...ws,
-          rootPath,
-          name: ws.name === 'Workspace' ? folderName : ws.name,
-        }
+        const newName = ws.name === 'Workspace' ? folderName : ws.name
+        return { ...ws, rootPath, name: newName }
       }),
     }))
+    // Sync metadata to main process
+    const ws = get().workspaces.find((w) => w.id === wsId)
+    if (ws) {
+      syncUpdateToMain(wsId, { rootPath, name: ws.name })
+    }
     // Track in recent projects
     window.electronAPI.recentProjectsAdd(rootPath)
   },
@@ -519,6 +713,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         ws.id === wsId ? { ...ws, color } : ws,
       ),
     }))
+    syncUpdateToMain(wsId, { color })
   },
 
   renameWorkspace(wsId, name) {
@@ -529,6 +724,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         ws.id === wsId ? { ...ws, name: trimmed } : ws,
       ),
     }))
+    syncUpdateToMain(wsId, { name: trimmed })
   },
 
   duplicateWorkspace(wsId) {
@@ -547,6 +743,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       focusedNodeId: null,
     }
     set((state) => ({ workspaces: [...state.workspaces, copy] }))
+    syncCreateToMain(copy)
     return copy.id
   },
 
@@ -579,13 +776,83 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     // Clear the canvas store if this is the active workspace
     if (wsId === get().selectedWorkspaceId) {
-      const canvas = useCanvasStore.getState()
-      for (const nodeId of Object.keys(canvas.nodes)) {
-        canvas.removeNode(nodeId)
-      }
+      canvasOps?.clearAllNodes()
     }
   },
+
+  // --- Cross-window sync ---
+
+  mergeWorkspaceInfos(infos) {
+    set((state) => {
+      const existingMap = new Map(state.workspaces.map((ws) => [ws.id, ws]))
+
+      // Update metadata for existing workspaces, add new ones
+      const updatedIds = new Set<string>()
+      for (const info of infos) {
+        updatedIds.add(info.id)
+        const existing = existingMap.get(info.id)
+        if (existing) {
+          // Merge metadata only — don't touch panels/canvas state
+          if (
+            existing.name !== info.name ||
+            existing.color !== info.color ||
+            existing.rootPath !== info.rootPath
+          ) {
+            existingMap.set(info.id, {
+              ...existing,
+              name: info.name,
+              color: info.color,
+              rootPath: info.rootPath,
+            })
+          }
+        } else {
+          // New workspace from another window — create empty local state
+          existingMap.set(info.id, {
+            id: info.id,
+            name: info.name,
+            color: info.color,
+            rootPath: info.rootPath,
+            panels: {},
+            canvasNodes: {},
+            regions: {},
+            zoomLevel: ZOOM_DEFAULT,
+            viewportOffset: { x: 0, y: 0 },
+            focusedNodeId: null,
+          })
+        }
+      }
+
+      // Remove workspaces that no longer exist in main (deleted from another window)
+      // But keep the currently selected workspace to avoid breaking the UI
+      const workspaces = Array.from(existingMap.values()).filter(
+        (ws) => updatedIds.has(ws.id) || ws.id === state.selectedWorkspaceId,
+      )
+
+      return { workspaces }
+    })
+  },
 }))
+
+// -----------------------------------------------------------------------------
+// Cross-window workspace sync — subscribe to main-process broadcasts
+// -----------------------------------------------------------------------------
+
+let workspaceSyncCleanup: (() => void) | null = null
+
+export function setupWorkspaceSync(): () => void {
+  if (workspaceSyncCleanup) return workspaceSyncCleanup
+
+  const unsubscribe = window.electronAPI.onWorkspaceChanged((infos) => {
+    useAppStore.getState().mergeWorkspaceInfos(infos)
+  })
+
+  workspaceSyncCleanup = () => {
+    unsubscribe()
+    workspaceSyncCleanup = null
+  }
+
+  return workspaceSyncCleanup
+}
 
 // -----------------------------------------------------------------------------
 // Granular selectors

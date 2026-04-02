@@ -6,7 +6,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useUIStore } from '../stores/uiStore'
 import { useAppStore } from '../stores/appStore'
-import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasStoreContext, useCanvasStoreApi } from '../stores/CanvasStoreContext'
 
 // -----------------------------------------------------------------------------
 // Command definitions
@@ -47,6 +47,16 @@ function FileTextIcon() {
       <polyline points="14 2 14 8 20 8" />
       <line x1="16" y1="13" x2="8" y2="13" />
       <line x1="16" y1="17" x2="8" y2="17" />
+    </svg>
+  )
+}
+
+function LayoutIcon() {
+  return (
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+      <line x1="3" y1="9" x2="21" y2="9" />
+      <line x1="9" y1="21" x2="9" y2="9" />
     </svg>
   )
 }
@@ -150,9 +160,11 @@ export const CommandPalette: React.FC = () => {
   const createTerminal = useAppStore((s) => s.createTerminal)
   const createBrowser = useAppStore((s) => s.createBrowser)
   const createEditor = useAppStore((s) => s.createEditor)
+  const createCanvas = useAppStore((s) => s.createCanvas)
   const toggleSidebar = useUIStore((s) => s.toggleSidebar)
   const setActiveRightSidebarView = useUIStore((s) => s.setActiveRightSidebarView)
-  const setZoom = useCanvasStore((s) => s.setZoom)
+  const canvasApi = useCanvasStoreApi()
+  const setZoom = useCanvasStoreContext((s) => s.setZoom)
 
   const rootPath = useAppStore((s) => {
     const ws = s.workspaces.find((w) => w.id === s.selectedWorkspaceId)
@@ -177,6 +189,8 @@ export const CommandPalette: React.FC = () => {
     setSelectedIndex(0)
   }, [setShowCommandPalette])
 
+  const dockCenter = { target: 'dock', zone: 'center' } as const
+
   // Build command items
   const allCommands: CommandItem[] = useMemo(
     () => [
@@ -185,21 +199,28 @@ export const CommandPalette: React.FC = () => {
         title: 'New Terminal',
         shortcutText: '\u2318T',
         icon: <TerminalIcon />,
-        action: () => createTerminal(selectedWorkspaceId),
+        action: () => createTerminal(selectedWorkspaceId, undefined, undefined, dockCenter),
       },
       {
         id: 'newBrowser',
         title: 'New Browser',
         shortcutText: '\u2318\u21E7B',
         icon: <GlobeIcon />,
-        action: () => createBrowser(selectedWorkspaceId),
+        action: () => createBrowser(selectedWorkspaceId, undefined, undefined, dockCenter),
       },
       {
         id: 'newEditor',
         title: 'New Editor',
         shortcutText: '\u2318\u21E7E',
         icon: <FileTextIcon />,
-        action: () => createEditor(selectedWorkspaceId),
+        action: () => createEditor(selectedWorkspaceId, undefined, undefined, dockCenter),
+      },
+      {
+        id: 'newCanvas',
+        title: 'New Canvas',
+        shortcutText: '',
+        icon: <LayoutIcon />,
+        action: () => createCanvas(selectedWorkspaceId),
       },
       {
         id: 'toggleSidebar',
@@ -234,21 +255,21 @@ export const CommandPalette: React.FC = () => {
         title: 'Zoom to Fit',
         shortcutText: '\u23181',
         icon: <ZoomToFitIcon />,
-        action: () => useCanvasStore.getState().zoomToFit(),
+        action: () => canvasApi.getState().zoomToFit(),
       },
       {
         id: 'autoLayout',
         title: 'Auto-Layout Panels',
         shortcutText: '',
         icon: <LayersIcon />,
-        action: () => useCanvasStore.getState().autoLayout(),
+        action: () => canvasApi.getState().autoLayout(),
       },
       {
         id: 'newRegion',
         title: 'New Region',
         shortcutText: '',
         icon: <RectangleIcon />,
-        action: () => useCanvasStore.getState().addRegion('Region', { x: 200, y: 200 }, { width: 400, height: 300 }),
+        action: () => canvasApi.getState().addRegion('Region', { x: 200, y: 200 }, { width: 400, height: 300 }),
       },
       {
         id: 'saveLayout',
@@ -258,7 +279,7 @@ export const CommandPalette: React.FC = () => {
         action: async () => {
           const name = window.prompt('Layout name:')
           if (!name?.trim()) return
-          const state = useCanvasStore.getState()
+          const state = canvasApi.getState()
           const appState = useAppStore.getState()
           const workspace = appState.workspaces.find((w) => w.id === appState.selectedWorkspaceId)
           const snapshot = {
@@ -295,9 +316,9 @@ export const CommandPalette: React.FC = () => {
             }
           }
           for (const region of snapshot.regions || []) {
-            useCanvasStore.getState().addRegion(region.label, region.origin, region.size, region.color)
+            canvasApi.getState().addRegion(region.label, region.origin, region.size, region.color)
           }
-          useCanvasStore.getState().zoomToFit()
+          canvasApi.getState().zoomToFit()
         },
       },
       {
@@ -306,7 +327,7 @@ export const CommandPalette: React.FC = () => {
         shortcutText: '',
         icon: <UploadIcon />,
         action: async () => {
-          const state = useCanvasStore.getState()
+          const state = canvasApi.getState()
           const appState = useAppStore.getState()
           const workspace = appState.workspaces.find((w) => w.id === appState.selectedWorkspaceId)
           if (!workspace) return
@@ -371,11 +392,11 @@ export const CommandPalette: React.FC = () => {
             }
 
             for (const region of data.regions || []) {
-              useCanvasStore.getState().addRegion(region.label, region.origin, region.size, region.color)
+              canvasApi.getState().addRegion(region.label, region.origin, region.size, region.color)
             }
 
-            if (data.zoomLevel) useCanvasStore.getState().setZoom(data.zoomLevel)
-            if (data.viewportOffset) useCanvasStore.getState().setViewportOffset(data.viewportOffset)
+            if (data.zoomLevel) canvasApi.getState().setZoom(data.zoomLevel)
+            if (data.viewportOffset) canvasApi.getState().setViewportOffset(data.viewportOffset)
           } catch {
             alert('Failed to load layout file')
           }
@@ -387,6 +408,7 @@ export const CommandPalette: React.FC = () => {
       createTerminal,
       createBrowser,
       createEditor,
+      createCanvas,
       toggleSidebar,
       setActiveRightSidebarView,
       setShowNodeSwitcher,
@@ -472,7 +494,7 @@ export const CommandPalette: React.FC = () => {
             if (file) {
               const wsId = useAppStore.getState().selectedWorkspaceId
               const fullPath = rootPath ? `${rootPath}/${file}` : file
-              useAppStore.getState().createEditor(wsId, fullPath)
+              useAppStore.getState().createEditor(wsId, fullPath, undefined, dockCenter)
               close()
             }
           }
@@ -562,7 +584,7 @@ export const CommandPalette: React.FC = () => {
                         onClick={() => {
                           const wsId = useAppStore.getState().selectedWorkspaceId
                           const fullPath = rootPath ? `${rootPath}/${file}` : file
-                          useAppStore.getState().createEditor(wsId, fullPath)
+                          useAppStore.getState().createEditor(wsId, fullPath, undefined, dockCenter)
                           close()
                         }}
                         onMouseEnter={() => setSelectedIndex(fileIndex)}

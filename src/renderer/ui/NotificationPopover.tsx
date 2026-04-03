@@ -8,6 +8,7 @@ const TYPE_DOTS: Record<Notification['type'], string> = {
   info: 'bg-white/40',
   success: 'bg-emerald-400',
   warning: 'bg-amber-400',
+  error: 'bg-red-400',
 }
 
 export const NotificationBell: React.FC = () => {

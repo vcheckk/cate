@@ -5,6 +5,8 @@
 import { IPty, spawn as ptySpawn } from 'node-pty'
 import { ipcMain } from 'electron'
 import os from 'os'
+import fs from 'fs'
+import path from 'path'
 import { execFile } from 'child_process'
 import {
   TERMINAL_CREATE,
@@ -16,6 +18,7 @@ import {
   TERMINAL_GET_CWD,
   TERMINAL_LOG_READ,
   TERMINAL_LOG_DELETE,
+  TERMINAL_SCROLLBACK_SAVE,
 } from '../../shared/ipc-channels'
 import { getOrCreateLogger, removeLogger, flushAll as flushAllLoggers } from './terminalLogger'
 import { sendToWindow, windowFromEvent } from '../windowRegistry'
@@ -267,12 +270,33 @@ export function registerHandlers(): void {
     })
   })
 
-  // Read terminal log for session restore
+  // Read terminal scrollback for session restore — prefers .scrollback (plain text
+  // captured from xterm buffer) over .log (raw PTY output with escape sequences)
   ipcMain.handle(TERMINAL_LOG_READ, async (_event, terminalId: string): Promise<string | null> => {
     const { TerminalLogger } = await import('./terminalLogger')
+    const logDir = TerminalLogger.getLogDir()
+
+    // Prefer scrollback capture (clean plain text)
+    const scrollbackPath = path.join(logDir, `${terminalId}.scrollback`)
+    try {
+      const data = fs.readFileSync(scrollbackPath, 'utf-8')
+      if (data) return data
+    } catch { /* fall through to raw log */ }
+
+    // Fall back to raw PTY log
     const logger = new TerminalLogger(terminalId)
     const data = logger.readAll()
     return data || null
+  })
+
+  // Save terminal scrollback content (plain text from xterm buffer)
+  ipcMain.handle(TERMINAL_SCROLLBACK_SAVE, async (_event, ptyId: string, content: string): Promise<void> => {
+    const { TerminalLogger } = await import('./terminalLogger')
+    const logDir = TerminalLogger.getLogDir()
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true })
+    }
+    fs.writeFileSync(path.join(logDir, `${ptyId}.scrollback`), content, 'utf-8')
   })
 
   // Delete terminal log files

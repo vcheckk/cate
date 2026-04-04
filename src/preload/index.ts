@@ -9,6 +9,7 @@ import {
   TERMINAL_GET_CWD,
   TERMINAL_LOG_READ,
   TERMINAL_LOG_DELETE,
+  TERMINAL_SCROLLBACK_SAVE,
   FS_READ_FILE,
   FS_WRITE_FILE,
   FS_READ_DIR,
@@ -154,6 +155,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   terminalLogDelete(terminalId: string): Promise<void> {
     return ipcRenderer.invoke(TERMINAL_LOG_DELETE, terminalId)
+  },
+
+  terminalScrollbackSave(ptyId: string, content: string): Promise<void> {
+    return ipcRenderer.invoke(TERMINAL_SCROLLBACK_SAVE, ptyId, content)
   },
 
   onTerminalExit(callback: (terminalId: string, exitCode: number) => void): () => void {

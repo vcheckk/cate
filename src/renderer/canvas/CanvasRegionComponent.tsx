@@ -1,7 +1,7 @@
-import React, { useCallback, useRef, useState, useEffect } from 'react'
-import { createPortal } from 'react-dom'
+import React, { useCallback, useRef, useState, useEffect, useMemo } from 'react'
 import type { CanvasRegion } from '../../shared/types'
 import { useCanvasStoreContext, useCanvasStoreApi } from '../stores/CanvasStoreContext'
+import ContextMenu, { type ContextMenuItem } from '../ui/ContextMenu'
 
 // Preset region colors
 const REGION_COLORS = [
@@ -43,22 +43,7 @@ const CanvasRegionComponent: React.FC<Props> = ({ region, zoomLevel }) => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState(region.label)
-  const [showColors, setShowColors] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
-
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  // Close context menu on click outside
-  useEffect(() => {
-    if (!contextMenu) return
-    const close = (e: MouseEvent) => {
-      if (menuRef.current && menuRef.current.contains(e.target as Node)) return
-      setContextMenu(null)
-      setShowColors(false)
-    }
-    window.addEventListener('mousedown', close)
-    return () => window.removeEventListener('mousedown', close)
-  }, [contextMenu])
 
   // Focus input when editing
   useEffect(() => {
@@ -179,6 +164,49 @@ const CanvasRegionComponent: React.FC<Props> = ({ region, zoomLevel }) => {
     e.stopPropagation()
     setContextMenu({ x: e.clientX, y: e.clientY })
   }, [])
+
+  const contextMenuItems = useMemo((): ContextMenuItem[] => {
+    const colorSubmenu: ContextMenuItem[] = REGION_COLORS.map((color) => ({
+      label: color === REGION_COLORS[0] ? 'Blue' : color === REGION_COLORS[1] ? 'Green' : color === REGION_COLORS[2] ? 'Orange' : color === REGION_COLORS[3] ? 'Red' : color === REGION_COLORS[4] ? 'Purple' : color === REGION_COLORS[5] ? 'Yellow' : color === REGION_COLORS[6] ? 'Teal' : 'Pink',
+      icon: (
+        <span style={{
+          display: 'inline-block', width: 14, height: 14, borderRadius: 3,
+          backgroundColor: color.replace(/[\d.]+\)$/, '0.4)'),
+          border: region.color === color ? '2px solid rgba(74, 158, 255, 0.8)' : '1px solid rgba(255,255,255,0.2)',
+        }} />
+      ),
+      onClick: () => canvasApi.getState().updateRegionColor(region.id, color),
+    }))
+
+    return [
+      {
+        label: 'Rename',
+        onClick: () => { setEditValue(region.label); setIsEditing(true) },
+      },
+      {
+        label: 'Change Color',
+        onClick: () => {},
+        submenu: colorSubmenu,
+      },
+      { label: '', separator: true, onClick: () => {} },
+      {
+        label: 'Dissolve Region',
+        onClick: () => canvasApi.getState().dissolveRegion(region.id),
+      },
+      {
+        label: 'Delete Region',
+        onClick: () => canvasApi.getState().removeRegion(region.id),
+      },
+      {
+        label: 'Delete Region + Contents',
+        danger: true,
+        onClick: () => {
+          canvasApi.getState().selectRegions([region.id])
+          canvasApi.getState().deleteSelection(true)
+        },
+      },
+    ]
+  }, [region.id, region.label, region.color])
 
   // Resize handle mouse down
   const handleResizeStart = useCallback((e: React.MouseEvent, handle: ResizeHandle) => {
@@ -347,109 +375,16 @@ const CanvasRegionComponent: React.FC<Props> = ({ region, zoomLevel }) => {
         </>
       )}
 
-      {/* Context menu — portaled to body to avoid CSS transform issues */}
-      {contextMenu && createPortal(
-        <div
-          ref={menuRef}
-          style={{
-            position: 'fixed',
-            left: contextMenu.x,
-            top: contextMenu.y,
-            backgroundColor: 'rgba(30, 30, 36, 0.95)',
-            border: '1px solid rgba(255,255,255,0.15)',
-            borderRadius: 8,
-            padding: '4px 0',
-            zIndex: 100000,
-            minWidth: 180,
-            backdropFilter: 'blur(20px)',
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <button
-            style={menuItemStyle}
-            onClick={() => { setContextMenu(null); setEditValue(region.label); setIsEditing(true) }}
-            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)')}
-            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-          >
-            Rename
-          </button>
-          <button
-            style={menuItemStyle}
-            onClick={() => { setShowColors(!showColors) }}
-            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)')}
-            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-          >
-            Change Color
-          </button>
-          {showColors && (
-            <div style={{ display: 'flex', gap: 4, padding: '4px 12px', flexWrap: 'wrap' }}>
-              {REGION_COLORS.map((color) => (
-                <div
-                  key={color}
-                  style={{
-                    width: 20,
-                    height: 20,
-                    borderRadius: 4,
-                    backgroundColor: color.replace(/[\d.]+\)$/, '0.4)'),
-                    border: region.color === color ? '2px solid rgba(74, 158, 255, 0.8)' : '1px solid rgba(255,255,255,0.2)',
-                    cursor: 'pointer',
-                  }}
-                  onClick={() => {
-                    canvasApi.getState().updateRegionColor(region.id, color)
-                    setContextMenu(null)
-                    setShowColors(false)
-                  }}
-                />
-              ))}
-            </div>
-          )}
-          <div style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.1)', margin: '4px 0' }} />
-          <button
-            style={menuItemStyle}
-            onClick={() => { canvasApi.getState().dissolveRegion(region.id); setContextMenu(null) }}
-            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)')}
-            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-          >
-            Dissolve Region
-          </button>
-          <button
-            style={menuItemStyle}
-            onClick={() => { canvasApi.getState().removeRegion(region.id); setContextMenu(null) }}
-            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)')}
-            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-          >
-            Delete Region
-          </button>
-          <button
-            style={{ ...menuItemStyle, color: 'rgba(255, 69, 58, 0.9)' }}
-            onClick={() => {
-              canvasApi.getState().selectRegions([region.id])
-              canvasApi.getState().deleteSelection(true)
-              setContextMenu(null)
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)')}
-            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-          >
-            Delete Region + Contents
-          </button>
-        </div>,
-        document.body,
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenuItems}
+          onClose={() => setContextMenu(null)}
+        />
       )}
     </>
   )
-}
-
-const menuItemStyle: React.CSSProperties = {
-  display: 'block',
-  width: '100%',
-  padding: '6px 12px',
-  background: 'none',
-  border: 'none',
-  color: 'rgba(255,255,255,0.85)',
-  fontSize: 13,
-  textAlign: 'left',
-  cursor: 'pointer',
-  whiteSpace: 'nowrap',
 }
 
 export default React.memo(CanvasRegionComponent)

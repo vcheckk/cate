@@ -62,8 +62,7 @@ async function readDir(dirPath: string): Promise<FileTreeNode[]> {
   const files: FileTreeNode[] = []
 
   for (const entry of entries) {
-    // Skip hidden files and exclusions
-    if (entry.startsWith('.')) continue
+    // Skip exclusions
     if (exclusionSet.has(entry)) continue
 
     const fullPath = path.join(dirPath, entry)

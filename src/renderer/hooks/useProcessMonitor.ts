@@ -50,6 +50,11 @@ export function useProcessMonitor(workspaceId: string): void {
         const agentState = (agentStateRaw as AgentState) ?? 'notRunning'
         const agentName = (agentNameRaw as string | null) ?? null
 
+        // Resolve the terminal's actual workspace — the hook's workspaceId is
+        // always the *selected* workspace, but this event fires for ALL terminals.
+        const actualWorkspaceId =
+          useStatusStore.getState().terminalWorkspaceMap[terminalId] ?? workspaceId
+
         // Retrieve previous state for this terminal
         const prevMap = previousStatesRef.current
         const prev = prevMap.get(terminalId) || {
@@ -62,8 +67,8 @@ export function useProcessMonitor(workspaceId: string): void {
         const isTransition = agentState !== prev.agentState
         if (isTransition) {
           // State transitions update immediately (for notifications)
-          store().setTerminalActivity(workspaceId, terminalId, terminalActivity)
-          store().setAgentState(workspaceId, terminalId, agentState, agentName)
+          store().setTerminalActivity(actualWorkspaceId, terminalId, terminalActivity)
+          store().setAgentState(actualWorkspaceId, terminalId, agentState, agentName)
           // Clear any pending debounced update
           const pending = pendingUpdates.get(terminalId)
           if (pending) {
@@ -76,8 +81,8 @@ export function useProcessMonitor(workspaceId: string): void {
           if (pending) clearTimeout(pending)
           pendingUpdates.set(terminalId, setTimeout(() => {
             pendingUpdates.delete(terminalId)
-            store().setTerminalActivity(workspaceId, terminalId, terminalActivity)
-            store().setAgentState(workspaceId, terminalId, agentState, agentName)
+            store().setTerminalActivity(actualWorkspaceId, terminalId, terminalActivity)
+            store().setAgentState(actualWorkspaceId, terminalId, agentState, agentName)
           }, 200))
         }
 
@@ -122,7 +127,7 @@ export function useProcessMonitor(workspaceId: string): void {
               title: `${displayName} needs input`,
               body: `${displayName} is waiting for your response.`,
               type: 'warning',
-              action: { type: 'focusTerminal', workspaceId, terminalId },
+              action: { type: 'focusTerminal', workspaceId: actualWorkspaceId, terminalId },
             })
           }
         }
@@ -135,7 +140,7 @@ export function useProcessMonitor(workspaceId: string): void {
               title: 'Task complete',
               body: `${finishedName} has finished running.`,
               type: 'success',
-              action: { type: 'focusTerminal', workspaceId, terminalId },
+              action: { type: 'focusTerminal', workspaceId: actualWorkspaceId, terminalId },
             })
           }
         }

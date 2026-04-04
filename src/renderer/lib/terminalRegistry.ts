@@ -54,6 +54,8 @@ export interface RegistryEntry {
   ptyId: string
   /** Cleanup functions for IPC listeners and xterm disposables. */
   cleanupListeners: Array<() => void>
+  /** Last known viewport scrollTop — continuously tracked for scroll restore on focus. */
+  lastScrollTop: number
 }
 
 interface CreateOpts {
@@ -179,6 +181,7 @@ async function getOrCreate(panelId: string, opts: CreateOpts): Promise<RegistryE
     searchAddon,
     ptyId: '', // filled below
     cleanupListeners,
+    lastScrollTop: 0,
   }
 
   // Register entry immediately so concurrent calls return the same object
@@ -388,6 +391,7 @@ async function reconnectTerminal(
     searchAddon,
     ptyId,
     cleanupListeners,
+    lastScrollTop: 0,
   }
 
   registry.set(panelId, entry)
@@ -499,6 +503,30 @@ function release(panelId: string): void {
 }
 
 /**
+ * Calls fitAddon.fit() and corrects for sub-pixel overflow.
+ *
+ * FitAddon calculates rows from getComputedStyle height, which can be
+ * fractionally larger than the actual visible area due to calc/flex
+ * rounding. When the resulting xterm element is taller than its
+ * overflow:hidden container, the bottom row(s) get clipped — but
+ * xterm's scrollbar doesn't account for the clipping, so
+ * scrollToBottom() leaves content invisible.
+ */
+function safeFit(terminal: Terminal, fitAddon: FitAddon, container: HTMLElement): void {
+  fitAddon.fit()
+
+  const xtermEl = (terminal as unknown as { element?: HTMLElement }).element
+  if (!xtermEl) return
+
+  if (xtermEl.offsetHeight > container.offsetHeight + 0.5) {
+    const newRows = Math.max(1, terminal.rows - 1)
+    if (newRows !== terminal.rows) {
+      terminal.resize(terminal.cols, newRows)
+    }
+  }
+}
+
+/**
  * Moves the xterm DOM element into container and calls fitAddon.fit().
  *
  * If the terminal is currently attached to a different container it is
@@ -520,7 +548,7 @@ function attach(panelId: string, container: HTMLDivElement): void {
 
   // Already attached to this exact container — just re-fit
   if (el.parentElement === container) {
-    try { fitAddon.fit() } catch { /* ignore */ }
+    try { safeFit(terminal, fitAddon, container) } catch { /* ignore */ }
     return
   }
 
@@ -530,6 +558,18 @@ function attach(panelId: string, container: HTMLDivElement): void {
   }
 
   container.appendChild(el)
+
+  // Track viewport scroll position continuously so we can restore it on focus.
+  // The listener is cleaned up via the entry's cleanupListeners on dispose/release.
+  const viewport = el.querySelector('.xterm-viewport') as HTMLElement | null
+  if (viewport) {
+    const onScroll = (): void => {
+      const e = registry.get(panelId)
+      if (e) e.lastScrollTop = viewport.scrollTop
+    }
+    viewport.addEventListener('scroll', onScroll, { passive: true })
+    entry.cleanupListeners.push(() => viewport.removeEventListener('scroll', onScroll))
+  }
 
   // Force layout reflow so the browser has calculated the new container size
   // before we resize the terminal / WebGL canvas.
@@ -579,13 +619,44 @@ function attach(panelId: string, container: HTMLDivElement): void {
         ? Math.abs(viewport.scrollTop - (viewport.scrollHeight - viewport.clientHeight)) < 5
         : true
 
-      fitAddon.fit()
+      safeFit(terminal, fitAddon, container)
       terminal.refresh(0, terminal.rows - 1)
 
       if (wasAtBottom) {
         terminal.scrollToBottom()
       }
     } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Safely fit the terminal to its current container, correcting for
+ * sub-pixel overflow. No-op if the terminal is not attached to a container.
+ */
+function fit(panelId: string): void {
+  const entry = registry.get(panelId)
+  if (!entry) return
+
+  const { terminal, fitAddon } = entry
+  const el = (terminal as unknown as { element?: HTMLElement }).element
+  const container = el?.parentElement
+  if (!el || !container) return
+
+  safeFit(terminal, fitAddon, container)
+}
+
+/**
+ * Restore the viewport scroll position from the last tracked value.
+ * Used after focus changes to counteract any scroll resets.
+ */
+function restoreScroll(panelId: string): void {
+  const entry = registry.get(panelId)
+  if (!entry) return
+
+  const viewport = (entry.terminal as unknown as { element?: HTMLElement }).element
+    ?.querySelector('.xterm-viewport') as HTMLElement | null
+  if (viewport && entry.lastScrollTop > 0) {
+    viewport.scrollTop = entry.lastScrollTop
   }
 }
 
@@ -707,6 +778,8 @@ export const terminalRegistry = {
   detach,
   dispose,
   release,
+  fit,
+  restoreScroll,
   setPendingTransfer,
   getEntry,
   has,

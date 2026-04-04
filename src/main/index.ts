@@ -612,6 +612,11 @@ function buildSinglePanelDockState(panelId: string): WindowDockState {
 // Set app name before menu and window creation
 app.setName('Cate')
 
+// In dev mode, use a separate userData directory so dev and production don't collide
+if (!app.isPackaged) {
+  app.setPath('userData', path.join(app.getPath('userData'), 'Dev'))
+}
+
 // Build application menu
 buildApplicationMenu()
 

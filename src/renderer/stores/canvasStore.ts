@@ -135,6 +135,7 @@ export interface CanvasStoreActions {
   removeAnnotation: (id: string) => void
   moveAnnotation: (id: string, origin: Point) => void
   updateAnnotation: (id: string, content: string) => void
+  updateAnnotationColor: (id: string, color: string) => void
 
   // Split panel actions
   splitNode: (nodeId: CanvasNodeId, direction: 'horizontal' | 'vertical', newPanelId: string) => void
@@ -961,6 +962,14 @@ export function createCanvasStore(): UseBoundStore<StoreApi<CanvasStore>> {
       const ann = state.annotations[id]
       if (!ann) return state
       return { annotations: { ...state.annotations, [id]: { ...ann, content } } }
+    })
+  },
+
+  updateAnnotationColor(id, color) {
+    set((state) => {
+      const ann = state.annotations[id]
+      if (!ann) return state
+      return { annotations: { ...state.annotations, [id]: { ...ann, color } } }
     })
   },
 

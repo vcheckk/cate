@@ -138,7 +138,7 @@ export default function TerminalPanel({
                 ? Math.abs(viewport.scrollTop - (viewport.scrollHeight - viewport.clientHeight)) < 5
                 : true
 
-              entry.fitAddon.fit()
+              terminalRegistry.fit(panelId)
 
               if (wasAtBottom) {
                 entry.terminal.scrollToBottom()
@@ -185,12 +185,6 @@ export default function TerminalPanel({
     const entry = terminalRegistry.getEntry(panelId)
     if (!entry) return
 
-    // Save the xterm viewport scroll position before focusing — the browser
-    // can reset .xterm-viewport.scrollTop during focus mechanics even with
-    // preventScroll.
-    const viewport = entry.terminal.element?.querySelector('.xterm-viewport') as HTMLElement | null
-    const savedScrollTop = viewport?.scrollTop ?? null
-
     const textarea = entry.terminal.element?.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
     if (textarea) {
       textarea.focus({ preventScroll: true })
@@ -198,12 +192,11 @@ export default function TerminalPanel({
       entry.terminal.focus()
     }
 
-    // Restore scroll position after the browser's focus-triggered scroll
-    if (viewport && savedScrollTop !== null) {
-      requestAnimationFrame(() => {
-        viewport.scrollTop = savedScrollTop
-      })
-    }
+    // Restore scroll position from the continuously-tracked value in the
+    // registry. This survives any scroll resets that may have happened
+    // between losing and regaining focus.
+    terminalRegistry.restoreScroll(panelId)
+    requestAnimationFrame(() => terminalRegistry.restoreScroll(panelId))
   }, [isFocused, panelId])
 
   // NOTE: No separate zoom-level re-fit needed — zoom only changes the CSS

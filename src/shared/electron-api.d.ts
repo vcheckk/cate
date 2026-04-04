@@ -41,6 +41,9 @@ export interface ElectronAPI {
   /** Delete the persisted scrollback log for a terminal. */
   terminalLogDelete(terminalId: string): Promise<void>
 
+  /** Save terminal scrollback content (plain text) for session restore. */
+  terminalScrollbackSave(ptyId: string, content: string): Promise<void>
+
   // ---------------------------------------------------------------------------
   // Filesystem
   // ---------------------------------------------------------------------------

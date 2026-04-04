@@ -77,19 +77,45 @@ export async function saveSession(): Promise<void> {
       }
     })
 
+    // Capture ptyId and save scrollback for all terminal snapshots
+    const scrollbackPromises: Promise<void>[] = []
+    for (const snap of nodeSnapshots) {
+      if (snap.panelType === 'terminal') {
+        const entry = terminalRegistry.getEntry(snap.panelId)
+        if (entry?.ptyId) {
+          snap.ptyId = entry.ptyId
+          // Extract xterm visual buffer as plain text (same approach as cross-window transfer)
+          const buffer = entry.terminal.buffer.active
+          const lastRow = buffer.baseY + buffer.cursorY
+          const lines: string[] = []
+          for (let i = 0; i < lastRow; i++) {
+            const line = buffer.getLine(i)
+            if (line) lines.push(line.translateToString(true))
+          }
+          while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+          const content = lines.join('\n')
+          if (content) {
+            scrollbackPromises.push(
+              window.electronAPI.terminalScrollbackSave(entry.ptyId, content).catch(() => {}),
+            )
+          }
+        }
+      }
+    }
+    if (scrollbackPromises.length > 0) {
+      await Promise.all(scrollbackPromises)
+    }
+
     // For each terminal node in the selected workspace, fetch current working directory
     // Batch all CWD requests concurrently for better performance
     if (isSelected) {
       const cwdPromises: { snap: NodeSnapshot; promise: Promise<string | null> }[] = []
       for (const snap of nodeSnapshots) {
-        if (snap.panelType === 'terminal') {
-          const entry = terminalRegistry.getEntry(snap.panelId)
-          if (entry?.ptyId) {
-            cwdPromises.push({
-              snap,
-              promise: window.electronAPI.terminalGetCwd(entry.ptyId).catch(() => null),
-            })
-          }
+        if (snap.panelType === 'terminal' && snap.ptyId) {
+          cwdPromises.push({
+            snap,
+            promise: window.electronAPI.terminalGetCwd(snap.ptyId).catch(() => null),
+          })
         }
       }
       const results = await Promise.all(cwdPromises.map((p) => p.promise))
@@ -241,7 +267,7 @@ export async function restoreSession(snapshot: SessionSnapshot, canvasStoreApi?:
         const panelId = appStore.createTerminal(wsId, undefined, position)
         terminalRestoreData.set(panelId, {
           cwd: nodeSnap.workingDirectory ?? undefined,
-          replayFromId: nodeSnap.panelId,
+          replayFromId: nodeSnap.ptyId ?? nodeSnap.panelId,
         })
         const canvasState = getCanvasState()
         if (canvasState) {
@@ -373,9 +399,13 @@ export async function replayTerminalLog(panelId: string): Promise<void> {
     return
   }
 
-  // Write a dim "restoring" header then replay the raw log bytes
-  entry.terminal.write('\x1b[90mRestoring terminal history...\x1b[0m\r\n')
-  entry.terminal.write(logData)
+  // Write scrollback content as plain text lines
+  const lines = logData.split('\n')
+  for (const line of lines) {
+    entry.terminal.write(line + '\r\n')
+  }
+  // Dim separator between restored content and new session
+  entry.terminal.write('\x1b[90m--- restored session ---\x1b[0m\r\n')
 
   terminalRestoreData.delete(panelId)
 }

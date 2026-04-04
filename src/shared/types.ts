@@ -518,6 +518,7 @@ export interface NodeSnapshot {
   url?: string | null
   filePath?: string | null
   workingDirectory?: string | null
+  ptyId?: string
   regionId?: string
 }
 

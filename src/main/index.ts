@@ -26,6 +26,7 @@ import { registerWorkspaceHandlers } from './workspaceManager'
 import { addAllowedRoot, validatePath } from './ipc/pathValidation'
 import { buildApplicationMenu, rebuildApplicationMenu } from './menu'
 import { initShellEnv } from './shellEnv'
+import { initAutoUpdater } from './auto-updater'
 import { beginTerminalTransfer, acknowledgeTerminalTransfer } from './ipc/terminal'
 import type { CateWindowParams, DockWindowInitPayload, PanelState, PanelTransferSnapshot, WindowDockState } from '../shared/types'
 
@@ -639,6 +640,8 @@ app.whenReady().then(async () => {
 
   const mainWin = createWindow({ type: 'main' })
   log.info('Main window created (id=%d)', mainWin.id)
+
+  initAutoUpdater()
 })
 
 app.on('window-all-closed', () => {

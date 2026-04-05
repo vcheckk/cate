@@ -6,7 +6,7 @@
 
 import { app, dialog, BrowserWindow, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
@@ -210,7 +210,7 @@ async function installMacOS(dmgPath: string): Promise<void> {
 
 async function installWindows(exePath: string): Promise<void> {
   // Launch NSIS installer — it handles uninstalling the old version
-  execFile(exePath, [], { detached: true, stdio: 'ignore' }).unref()
+  spawn(exePath, [], { detached: true, stdio: 'ignore' }).unref()
   app.quit()
 }
 

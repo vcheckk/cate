@@ -48,7 +48,8 @@ async function generatePng() {
 }
 
 async function generateIco() {
-  const pngToIco = require('png-to-ico')
+  const pngToIcoMod = require('png-to-ico')
+  const pngToIco = pngToIcoMod.default || pngToIcoMod
   const sizes = [16, 32, 48, 64, 128, 256]
   const pngBuffers = await Promise.all(sizes.map((s) => createIcon(s)))
   const ico = await pngToIco(pngBuffers)

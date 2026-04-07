@@ -48,10 +48,10 @@ async function generatePng() {
 }
 
 async function generateIco() {
-  const toIco = require('to-ico')
+  const pngToIco = require('png-to-ico')
   const sizes = [16, 32, 48, 64, 128, 256]
   const pngBuffers = await Promise.all(sizes.map((s) => createIcon(s)))
-  const ico = await toIco(pngBuffers)
+  const ico = await pngToIco(pngBuffers)
   fs.writeFileSync(path.join(BUILD_DIR, 'icon.ico'), ico)
   console.log('  icon.ico (' + sizes.join(', ') + ')')
 }

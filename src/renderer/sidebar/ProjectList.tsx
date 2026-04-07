@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react'
 import { Plus } from 'lucide-react'
+import { SidebarToggleIcon } from './SidebarToggleIcon'
 import { useAppStore, useWorkspaceList } from '../stores/appStore'
 import { useUIStore } from '../stores/uiStore'
 import { NotificationBell } from '../ui/NotificationPopover'
@@ -11,6 +12,7 @@ export const ProjectList: React.FC = () => {
   const addWorkspace = useAppStore((s) => s.addWorkspace)
   const selectWorkspace = useAppStore((s) => s.selectWorkspace)
   const removeWorkspace = useAppStore((s) => s.removeWorkspace)
+  const toggleSidebar = useUIStore((s) => s.toggleSidebar)
 
   const handleNewWorkspace = useCallback(() => {
     const wsId = addWorkspace()
@@ -30,6 +32,14 @@ export const ProjectList: React.FC = () => {
           title="New Workspace"
         >
           <Plus size={16} />
+        </button>
+        <div className="flex-1" />
+        <button
+          className="text-white/30 hover:text-white/60 transition-colors p-1"
+          onClick={toggleSidebar}
+          title="Collapse sidebar (⌘\\)"
+        >
+          <SidebarToggleIcon size={16} direction="close" />
         </button>
       </div>
 

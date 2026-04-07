@@ -7,7 +7,9 @@ import { useAppStore, useWorkspaceList } from '../stores/appStore'
 import { useUIStore } from '../stores/uiStore'
 import { NotificationBell } from '../ui/NotificationPopover'
 import type { SidebarView } from '../stores/uiStore'
-import { ChevronLeft, ChevronRight, FolderOpen, GitBranch, Plus } from 'lucide-react'
+import { FolderOpen, GitBranch, Plus } from 'lucide-react'
+import pkg from '../../../package.json'
+import { SidebarToggleIcon } from './SidebarToggleIcon'
 
 // Custom agent setup icon — bottle/flask shape, matches lucide stroke style
 const AgentSetupIcon = React.forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement> & { size?: number | string }>(
@@ -36,7 +38,7 @@ interface SidebarProps {
   isVisible: boolean
 }
 
-const LEFT_COLLAPSED_WIDTH = 36
+const LEFT_COLLAPSED_WIDTH = 44
 
 export const Sidebar: React.FC<SidebarProps> = ({ isVisible }) => {
   const [width, setWidth] = useState(LEFT_DEFAULT_WIDTH)
@@ -95,6 +97,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ isVisible }) => {
       {/* When collapsed: show workspace dots + action icons */}
       {!isVisible && (
         <div className="flex flex-col items-center gap-1 py-2 flex-shrink-0">
+          <button
+            className="text-white/30 hover:text-white/60 transition-colors p-1"
+            onClick={toggleSidebar}
+            title="Expand sidebar (⌘\\)"
+          >
+            <SidebarToggleIcon size={16} direction="open" />
+          </button>
           <NotificationBell />
           <button
             className="text-white/40 hover:text-white/70 transition-colors p-1"
@@ -111,14 +120,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ isVisible }) => {
             return (
               <button
                 key={ws.id}
-                className={`relative flex items-center justify-center w-7 h-7 rounded-md transition-colors ${
-                  isSelected ? 'ring-1 ring-white/30' : 'hover:bg-white/10'
+                className={`relative flex items-center justify-center w-6 h-6 rounded transition-colors ${
+                  isSelected ? 'ring-1 ring-white/40' : 'hover:brightness-125'
                 }`}
-                style={{ backgroundColor: isSelected ? ws.color : `${ws.color}66` }}
+                style={{ backgroundColor: isSelected ? ws.color : `${ws.color}55` }}
                 onClick={() => selectWorkspace(ws.id)}
                 title={label}
               >
-                <span className="text-[10px] font-bold text-white">
+                <span className="text-[9px] font-bold text-white leading-none">
                   {panelCount > 0 ? panelCount : label.charAt(0).toUpperCase()}
                 </span>
               </button>
@@ -134,15 +143,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ isVisible }) => {
 
       <div className="flex-1" />
 
-      <div className="flex-shrink-0 border-t border-white/10 p-1.5">
-        <button
-          className="flex items-center justify-center w-full h-6 rounded text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors"
-          onClick={toggleSidebar}
-          title={isVisible ? 'Collapse sidebar (⌘\\)' : 'Expand sidebar (⌘\\)'}
-        >
-          {isVisible ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
-        </button>
-      </div>
+      {isVisible && (
+        <div className="flex-shrink-0 px-2 py-1.5 text-center">
+          <span className="text-[10px] text-white/25 select-none">
+            Cate v{pkg.version}
+          </span>
+        </div>
+      )}
 
       {/* Resize handle (only when expanded) */}
       {isVisible && (

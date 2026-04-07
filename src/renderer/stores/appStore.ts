@@ -1017,7 +1017,7 @@ export function useWorkspaceRootPath(wsId?: string): string | undefined {
   })
 }
 
-/** Returns workspaces array, re-rendering only on add/remove/reorder. */
+/** Returns workspaces array, re-rendering on add/remove/reorder and metadata changes (name, color, rootPath). */
 export function useWorkspaceList(): WorkspaceState[] {
   return useStoreWithEqualityFn(
     useAppStore,
@@ -1025,7 +1025,12 @@ export function useWorkspaceList(): WorkspaceState[] {
     (a, b) => {
       if (a.length !== b.length) return false
       for (let i = 0; i < a.length; i++) {
-        if (a[i].id !== b[i].id) return false
+        if (
+          a[i].id !== b[i].id ||
+          a[i].name !== b[i].name ||
+          a[i].color !== b[i].color ||
+          a[i].rootPath !== b[i].rootPath
+        ) return false
       }
       return true
     },

@@ -248,7 +248,16 @@ export const WorkspaceTab: React.FC<WorkspaceTabProps> = ({
             onClick={(e) => e.stopPropagation()}
           />
         ) : (
-          <span className="flex-1 min-w-0 text-sm font-semibold truncate">
+          <span
+            className="flex-1 min-w-0 text-sm font-semibold truncate"
+            title={isSelected ? 'Click to rename' : undefined}
+            onClick={(e) => {
+              if (!isSelected) return
+              e.stopPropagation()
+              setRenameValue(workspace.name || workspace.rootPath.split('/').pop() || 'Workspace')
+              setIsRenaming(true)
+            }}
+          >
             {displayPath}
           </span>
         )}

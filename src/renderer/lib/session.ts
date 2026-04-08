@@ -393,6 +393,11 @@ export async function restoreSession(snapshot: SessionSnapshot, canvasStoreApi?:
     }
   }
 
+  // Safety net: guarantee the center zone has a canvas panel after restore.
+  // Without this, a session saved in a bad state (or one whose center layout
+  // references non-canvas panels only) would come up as a blank center pane.
+  appStore.ensureCenterCanvas(wsId)
+
   log.debug(`[session] workspace ${wsId} restored in ${(performance.now() - t0).toFixed(1)}ms`)
 }
 
@@ -551,11 +556,57 @@ export async function restoreDeferredWorkspace(workspaceId: string, canvasStoreA
 }
 
 // -----------------------------------------------------------------------------
-// Auto-save (debounced)
+// Auto-save (idle debounce + max-wait + periodic safety net)
+//
+// Rationale: a pure trailing debounce never flushes during sustained activity
+// (continuous canvas drag, typing into editor). We want background persistence
+// with bounded data loss, without saving on every frame of a drag.
+//
+// - IDLE_DELAY: save this long after the last change (covers quiet periods)
+// - MAX_WAIT:   guaranteed flush during sustained activity
+// - SAFETY_INTERVAL: periodic catch-all; no-op if nothing pending
+// saveSession itself is async + IPC, so it doesn't block the render thread.
 // -----------------------------------------------------------------------------
 
-let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
+const IDLE_DELAY = 1200
+const MAX_WAIT = 8000
+const SAFETY_INTERVAL = 60_000
+
+let idleTimer: ReturnType<typeof setTimeout> | null = null
+let maxWaitTimer: ReturnType<typeof setTimeout> | null = null
+let safetyTimer: ReturnType<typeof setInterval> | null = null
+let pendingSave = false
+let saveInFlight = false
 let autoSaveSetUp = false
+
+function runSave(): void {
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null }
+  if (maxWaitTimer) { clearTimeout(maxWaitTimer); maxWaitTimer = null }
+  if (!pendingSave) return
+  pendingSave = false
+  if (saveInFlight) {
+    // A save is already running; mark dirty so the next scheduler tick re-runs.
+    pendingSave = true
+    return
+  }
+  saveInFlight = true
+  saveSession()
+    .catch(() => {})
+    .finally(() => {
+      saveInFlight = false
+      // If more changes arrived while saving, re-arm idle timer.
+      if (pendingSave) scheduleSave()
+    })
+}
+
+function scheduleSave(): void {
+  pendingSave = true
+  if (idleTimer) clearTimeout(idleTimer)
+  idleTimer = setTimeout(runSave, IDLE_DELAY)
+  if (!maxWaitTimer) {
+    maxWaitTimer = setTimeout(runSave, MAX_WAIT)
+  }
+}
 
 export function setupAutoSave(canvasStoreApi?: StoreApi<CanvasStore>): () => void {
   if (autoSaveSetUp) {
@@ -563,28 +614,19 @@ export function setupAutoSave(canvasStoreApi?: StoreApi<CanvasStore>): () => voi
   }
   autoSaveSetUp = true
 
-  const unsubCanvas = canvasStoreApi
-    ? canvasStoreApi.subscribe(() => {
-        if (autoSaveTimer) clearTimeout(autoSaveTimer)
-        autoSaveTimer = setTimeout(() => saveSession(), 5000)
-      })
-    : () => {}
+  const unsubCanvas = canvasStoreApi ? canvasStoreApi.subscribe(scheduleSave) : () => {}
+  const unsubApp = useAppStore.subscribe(scheduleSave)
+  const unsubDock = useDockStore.subscribe(scheduleSave)
 
-  const unsubApp = useAppStore.subscribe(() => {
-    if (autoSaveTimer) clearTimeout(autoSaveTimer)
-    autoSaveTimer = setTimeout(() => saveSession(), 5000)
-  })
-
-  const unsubDock = useDockStore.subscribe(() => {
-    if (autoSaveTimer) clearTimeout(autoSaveTimer)
-    autoSaveTimer = setTimeout(() => saveSession(), 5000)
-  })
+  // Periodic safety net — cheap no-op when nothing is pending.
+  safetyTimer = setInterval(() => {
+    if (pendingSave) runSave()
+  }, SAFETY_INTERVAL)
 
   // Listen for flush-save requests from main process (quit, window close)
   const unsubFlush = window.electronAPI.onSessionFlushSave(() => {
-    if (autoSaveTimer) clearTimeout(autoSaveTimer)
-    autoSaveTimer = null
-    saveSession()
+    pendingSave = true
+    runSave()
   })
 
   return () => {
@@ -592,7 +634,9 @@ export function setupAutoSave(canvasStoreApi?: StoreApi<CanvasStore>): () => voi
     unsubApp()
     unsubDock()
     unsubFlush()
-    if (autoSaveTimer) clearTimeout(autoSaveTimer)
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null }
+    if (maxWaitTimer) { clearTimeout(maxWaitTimer); maxWaitTimer = null }
+    if (safetyTimer) { clearInterval(safetyTimer); safetyTimer = null }
     autoSaveSetUp = false
   }
 }

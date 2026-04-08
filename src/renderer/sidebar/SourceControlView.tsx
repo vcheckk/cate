@@ -666,7 +666,7 @@ export const SourceControlView: React.FC<SourceControlViewProps> = ({ rootPath }
         />
         <div className="flex gap-1 mt-1.5">
           <button
-            className="flex-1 py-1 rounded text-[11px] font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed bg-surface-6 hover:bg-hover text-primary"
+            className="flex-1 py-1 rounded text-[11px] font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed bg-surface-5 hover:bg-hover text-primary"
             disabled={!commitMessage.trim() || stagedFiles.length === 0 || committing}
             onClick={commit}
           >

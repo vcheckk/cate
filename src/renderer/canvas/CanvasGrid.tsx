@@ -1,15 +1,46 @@
 // =============================================================================
 // CanvasGrid — SVG grid overlay rendered behind canvas nodes.
 // Ported from CanvasView.swift drawGrid() method.
+//
+// Performance: offset subscription is imperative (canvasApi.subscribe) so this
+// component never re-renders during pan. It only re-renders when zoom,
+// containerSize, or gridStyle/gridSpacing change.
 // =============================================================================
 
-import React, { useMemo } from 'react'
-import { useCanvasStoreContext } from '../stores/CanvasStoreContext'
+import React, { useRef, useEffect, useMemo } from 'react'
+import { useCanvasStoreContext, useCanvasStoreApi } from '../stores/CanvasStoreContext'
 import { useSettingsStore } from '../stores/settingsStore'
 
 interface CanvasGridProps {
   containerWidth: number
   containerHeight: number
+}
+
+/** Compute the SVG position/size for the visible canvas rect. */
+function computeGridBounds(
+  offsetX: number,
+  offsetY: number,
+  zoom: number,
+  containerWidth: number,
+  containerHeight: number,
+  gridSpacing: number,
+): { startX: number; startY: number; gridWidth: number; gridHeight: number } {
+  const left = -offsetX / zoom
+  const top = -offsetY / zoom
+  const right = (-offsetX + containerWidth) / zoom
+  const bottom = (-offsetY + containerHeight) / zoom
+
+  const startX = Math.floor(left / gridSpacing) * gridSpacing
+  const startY = Math.floor(top / gridSpacing) * gridSpacing
+  const endX = Math.ceil(right / gridSpacing) * gridSpacing
+  const endY = Math.ceil(bottom / gridSpacing) * gridSpacing
+
+  return {
+    startX,
+    startY,
+    gridWidth: endX - startX,
+    gridHeight: endY - startY,
+  }
 }
 
 const CanvasGrid: React.FC<CanvasGridProps> = ({
@@ -19,38 +50,64 @@ const CanvasGrid: React.FC<CanvasGridProps> = ({
   const gridStyle = useSettingsStore((s) => s.gridStyle)
   const gridSpacing = useSettingsStore((s) => s.gridSpacing)
   const zoom = useCanvasStoreContext((s) => s.zoomLevel)
-  const offset = useCanvasStoreContext((s) => s.viewportOffset)
+  // NOTE: viewportOffset is intentionally NOT subscribed here via React.
+  // Instead we read it once to seed the imperative subscription below.
+  const canvasApi = useCanvasStoreApi()
 
-  // Compute the visible canvas rect from the viewport
-  const visibleRect = useMemo(() => {
-    return {
-      left: -offset.x / zoom,
-      top: -offset.y / zoom,
-      right: (-offset.x + containerWidth) / zoom,
-      bottom: (-offset.y + containerHeight) / zoom,
+  const svgRef = useRef<SVGSVGElement>(null)
+
+  // Seed values so we can apply the initial position synchronously.
+  const initialOffset = canvasApi.getState().viewportOffset
+
+  // Stable ref to current props so the subscription callback always reads fresh values.
+  const propsRef = useRef({ containerWidth, containerHeight, gridSpacing, zoom })
+  propsRef.current = { containerWidth, containerHeight, gridSpacing, zoom }
+
+  // Imperatively update SVG position/size on offset changes — no React re-render.
+  useEffect(() => {
+    const applyBounds = (offsetX: number, offsetY: number) => {
+      const svg = svgRef.current
+      if (!svg) return
+      const { containerWidth: cw, containerHeight: ch, gridSpacing: gs, zoom: z } = propsRef.current
+      const { startX, startY, gridWidth, gridHeight } = computeGridBounds(offsetX, offsetY, z, cw, ch, gs)
+      svg.style.left = `${startX}px`
+      svg.style.top = `${startY}px`
+      svg.style.width = `${gridWidth}px`
+      svg.style.height = `${gridHeight}px`
     }
-  }, [offset.x, offset.y, zoom, containerWidth, containerHeight])
 
-  // Snap visible bounds to grid boundaries (with some padding)
-  const gridBounds = useMemo(() => {
-    const startX = Math.floor(visibleRect.left / gridSpacing) * gridSpacing
-    const startY = Math.floor(visibleRect.top / gridSpacing) * gridSpacing
-    const endX = Math.ceil(visibleRect.right / gridSpacing) * gridSpacing
-    const endY = Math.ceil(visibleRect.bottom / gridSpacing) * gridSpacing
-    return { startX, startY, endX, endY }
-  }, [visibleRect, gridSpacing])
+    // Apply immediately with current offset
+    const { viewportOffset } = canvasApi.getState()
+    applyBounds(viewportOffset.x, viewportOffset.y)
+
+    // Subscribe to store — only update DOM, no setState
+    const unsubscribe = canvasApi.subscribe((state, prev) => {
+      if (state.viewportOffset !== prev.viewportOffset) {
+        applyBounds(state.viewportOffset.x, state.viewportOffset.y)
+      }
+    })
+    return unsubscribe
+    // Re-run when zoom or container size changes (those DO require a re-render anyway)
+  }, [canvasApi, zoom, containerWidth, containerHeight, gridSpacing])
 
   if (gridStyle === 'blank') {
     return null
   }
 
-  const { startX, startY, endX, endY } = gridBounds
-  const gridWidth = endX - startX
-  const gridHeight = endY - startY
+  // Compute initial SVG bounds from the seed offset (zoom/container changes trigger re-render)
+  const { startX, startY, gridWidth, gridHeight } = computeGridBounds(
+    initialOffset.x,
+    initialOffset.y,
+    zoom,
+    containerWidth,
+    containerHeight,
+    gridSpacing,
+  )
 
   if (gridStyle === 'dots') {
     return (
       <svg
+        ref={svgRef}
         style={{
           position: 'absolute',
           left: startX,
@@ -78,11 +135,12 @@ const CanvasGrid: React.FC<CanvasGridProps> = ({
             />
           </pattern>
         </defs>
+        {/* 100%/100% so the rect always fills the SVG even when we resize it imperatively */}
         <rect
           x={0}
           y={0}
-          width={gridWidth}
-          height={gridHeight}
+          width="100%"
+          height="100%"
           fill="url(#grid-dots)"
         />
       </svg>
@@ -92,6 +150,7 @@ const CanvasGrid: React.FC<CanvasGridProps> = ({
   // gridStyle === 'lines'
   return (
     <svg
+      ref={svgRef}
       style={{
         position: 'absolute',
         left: startX,
@@ -129,11 +188,12 @@ const CanvasGrid: React.FC<CanvasGridProps> = ({
           />
         </pattern>
       </defs>
+      {/* 100%/100% so the rect always fills the SVG even when we resize it imperatively */}
       <rect
         x={0}
         y={0}
-        width={gridWidth}
-        height={gridHeight}
+        width="100%"
+        height="100%"
         fill="url(#grid-lines)"
       />
     </svg>

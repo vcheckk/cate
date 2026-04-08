@@ -17,7 +17,7 @@ import type {
   Size,
   DockZonePosition,
 } from '../../shared/types'
-import { PANEL_DEFAULT_SIZES, ZOOM_DEFAULT } from '../../shared/types'
+import { PANEL_DEFAULT_SIZES, ZOOM_DEFAULT, ALL_ZONES } from '../../shared/types'
 import type { CanvasNodeId, CanvasNodeState, CanvasRegion } from '../../shared/types'
 import type { StoreApi } from 'zustand'
 import type { CanvasStore } from './canvasStore'
@@ -94,28 +94,21 @@ function generateId(): string {
   return crypto.randomUUID()
 }
 
-/** Workspace accent colors, cycled through. */
+/** Workspace accent colors — muted palette, user-selectable. */
 export const WORKSPACE_COLORS = [
-  '#0080ff', // pure blue
-  '#ff8000', // pure orange
-  '#00e000', // pure green
-  '#aa00ff', // pure violet
-  '#ff0000', // pure red
-  '#00e0e0', // pure cyan
+  '#6b8fb0', // slate blue
+  '#c08a5a', // warm tan
+  '#7aa074', // sage
+  '#9d7fb5', // muted violet
+  '#c07070', // dusty red
+  '#6aa5a5', // muted teal
 ]
-
-let colorIndex = 0
-function nextColor(): string {
-  const color = WORKSPACE_COLORS[colorIndex % WORKSPACE_COLORS.length]
-  colorIndex++
-  return color
-}
 
 function createDefaultWorkspace(name?: string, rootPath?: string): WorkspaceState {
   return {
     id: generateId(),
     name: name ?? 'Workspace',
-    color: nextColor(),
+    color: '',
     rootPath: rootPath ?? '',
     panels: {},
     canvasNodes: {},
@@ -131,20 +124,32 @@ function createDefaultWorkspace(name?: string, rootPath?: string): WorkspaceStat
 // Main-process sync helpers (fire-and-forget — local state is optimistic)
 // -----------------------------------------------------------------------------
 
+// Serialize workspace mutations so main-process state can't diverge from
+// renderer state when multiple updates fire in quick succession (the previous
+// fire-and-forget approach allowed them to land out of order).
+let workspaceSyncQueue: Promise<unknown> = Promise.resolve()
+function enqueueWorkspaceSync(label: string, fn: () => Promise<unknown>): void {
+  workspaceSyncQueue = workspaceSyncQueue
+    .then(fn, fn)
+    .catch((err) => log.warn(`[workspace-sync] ${label} failed:`, err))
+}
+
 function syncCreateToMain(ws: WorkspaceState): void {
-  window.electronAPI.workspaceCreate({
-    name: ws.name,
-    rootPath: ws.rootPath,
-    id: ws.id,
-  }).catch((err) => log.warn('[workspace-sync] Create failed:', err))
+  enqueueWorkspaceSync('Create', () =>
+    window.electronAPI.workspaceCreate({
+      name: ws.name,
+      rootPath: ws.rootPath,
+      id: ws.id,
+    }),
+  )
 }
 
 function syncUpdateToMain(id: string, changes: Partial<Omit<WorkspaceInfo, 'id'>>): void {
-  window.electronAPI.workspaceUpdate(id, changes).catch((err) => log.warn('[workspace-sync] Update failed:', err))
+  enqueueWorkspaceSync('Update', () => window.electronAPI.workspaceUpdate(id, changes))
 }
 
 function syncRemoveFromMain(id: string): void {
-  window.electronAPI.workspaceRemove(id).catch((err) => log.warn('[workspace-sync] Remove failed:', err))
+  enqueueWorkspaceSync('Remove', () => window.electronAPI.workspaceRemove(id))
 }
 
 // -----------------------------------------------------------------------------
@@ -184,6 +189,11 @@ interface AppStoreActions {
   createFileExplorer: (workspaceId: string, position?: Point, placement?: PanelPlacement) => string
   createProjectList: (workspaceId: string, position?: Point, placement?: PanelPlacement) => string
   createCanvas: (workspaceId: string, position?: Point, placement?: PanelPlacement) => string
+
+  // Ensure the center dock zone contains a canvas panel for the given workspace.
+  // Covers session-restore and new-workspace paths where the center layout may
+  // exist but reference no canvas-type panel (→ blank center pane bug).
+  ensureCenterCanvas: (workspaceId: string) => void
 
   // Panel management
   closePanel: (workspaceId: string, panelId: string) => void
@@ -348,11 +358,64 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
 
       // Ensure the center dock zone has a canvas panel — covers the case where
-      // a brand new workspace was created before any canvas panel existed yet.
-      const centerAfter = useDockStore.getState().zones.center
-      if (!centerAfter.layout) {
-        get().createCanvas(id)
+      // a brand new workspace was created before any canvas panel existed yet,
+      // or where a restored dock layout references no canvas-type panel.
+      get().ensureCenterCanvas(id)
+    }
+  },
+
+  ensureCenterCanvas(workspaceId) {
+    const ws = get().workspaces.find((w) => w.id === workspaceId)
+    if (!ws) return
+    const dockState = useDockStore.getState()
+
+    // Collect panel IDs referenced by any dock zone
+    const walk = (
+      node: import('../../shared/types').DockLayoutNode,
+      out: Set<string>,
+    ) => {
+      if (node.type === 'tabs') node.panelIds.forEach((id) => out.add(id))
+      else node.children.forEach((c) => walk(c, out))
+    }
+    const allDockPanelIds = new Set<string>()
+    for (const zoneName of ALL_ZONES) {
+      const zone = dockState.zones[zoneName]
+      if (zone.layout) walk(zone.layout, allDockPanelIds)
+    }
+
+    // Sweep orphaned canvas panels (in ws.panels but not in any dock zone).
+    // These accumulate when session restore or dock resets leave stale
+    // canvas entries behind — the sidebar would then show phantom canvases.
+    const orphanedCanvasIds = Object.values(ws.panels)
+      .filter((p) => p.type === 'canvas' && !allDockPanelIds.has(p.id))
+      .map((p) => p.id)
+
+    if (orphanedCanvasIds.length > 0) {
+      for (const id of orphanedCanvasIds) {
+        try { releaseCanvasStoreForPanel(id) } catch { /* ignore */ }
       }
+      set((state) => ({
+        workspaces: state.workspaces.map((w) => {
+          if (w.id !== workspaceId) return w
+          const panels = { ...w.panels }
+          for (const id of orphanedCanvasIds) delete panels[id]
+          return { ...w, panels }
+        }),
+      }))
+    }
+
+    // Check if the center zone now contains a canvas-type panel
+    const centerPanelIds: string[] = []
+    const center = dockState.zones.center
+    if (center.layout) {
+      const c = new Set<string>()
+      walk(center.layout, c)
+      centerPanelIds.push(...c)
+    }
+    const wsAfter = get().workspaces.find((w) => w.id === workspaceId)
+    const hasCanvas = centerPanelIds.some((pid) => wsAfter?.panels[pid]?.type === 'canvas')
+    if (!hasCanvas) {
+      get().createCanvas(workspaceId)
     }
   },
 

@@ -189,14 +189,35 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
         }
       }
     } else {
+      // Files: single click only selects. Double-click opens (see handleDoubleClick).
       onSelect(node.path, meta)
-      // Plain click on a file: open it as a dock tab next to the canvas.
-      // Modifier-clicks (cmd/shift) only adjust the selection.
-      if (!meta.shift && !meta.cmd) {
-        onFileOpen([node.path], 'dock')
-      }
     }
-  }, [node, isExpanded, children.length, onSelect, onFileOpen])
+  }, [node, isExpanded, children.length, onSelect])
+
+  const handleDoubleClick = useCallback(async (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (node.isDirectory) {
+      // Double-click a folder: open all direct file children as dock tabs.
+      let entries = children
+      if (entries.length === 0 && window.electronAPI) {
+        try {
+          entries = await window.electronAPI.fsReadDir(node.path)
+          setChildren(entries)
+        } catch {
+          entries = []
+        }
+      }
+      const filePaths = entries.filter((c) => !c.isDirectory).map((c) => c.path)
+      if (filePaths.length > 0) onFileOpen(filePaths, 'dock')
+    } else {
+      // Double-click a file: if it's part of a multi-selection, open all selected files.
+      const paths = selectedPaths.has(node.path) && selectedPaths.size > 1
+        ? [...selectedPaths]
+        : [node.path]
+      onFileOpen(paths, 'dock')
+    }
+  }, [node, children, selectedPaths, onFileOpen])
 
   // Forward declarations are filled in below; handleContextMenu uses them via refs
   // through closure on the latest functions defined later in render.
@@ -344,6 +365,7 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
         } ${isDimmed ? 'opacity-40' : ''}`}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
         onContextMenu={handleContextMenu}
         draggable
         onDragStart={(e: React.DragEvent) => {

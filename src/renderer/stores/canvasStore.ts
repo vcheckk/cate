@@ -23,7 +23,9 @@ import {
   ZOOM_DEFAULT,
   PANEL_DEFAULT_SIZES,
 } from '../../shared/types'
-import { autoLayout as computeAutoLayout } from '../canvas/layoutEngine'
+import {
+  autoLayoutAll as computeAutoLayoutAll,
+} from '../canvas/layoutEngine'
 import { viewToCanvas as viewToCanvasCoords } from '../lib/coordinates'
 
 // -----------------------------------------------------------------------------
@@ -219,20 +221,8 @@ function findFreePosition(
   }
 
   const gap = 40
-
-  // Determine the anchor point we'd ideally place the new node at.
-  let anchor: Point
-  if (preferred) {
-    anchor = preferred
-  } else {
-    const reference =
-      (focusedNodeId && nodes[focusedNodeId]) ||
-      nodeList[nodeList.length - 1]
-    anchor = {
-      x: reference.origin.x + reference.size.width + gap,
-      y: reference.origin.y,
-    }
-  }
+  const grid = 20
+  const snap = (v: number) => Math.round(v / grid) * grid
 
   const fits = (p: Point): boolean => {
     const rect = { origin: p, size: defaultSize }
@@ -241,42 +231,60 @@ function findFreePosition(
     )
   }
 
-  if (fits(anchor)) return anchor
+  // Pick a reference node: explicit focus, else the most recently created.
+  const reference =
+    (focusedNodeId && nodes[focusedNodeId]) ||
+    nodeList.reduce((a, b) => (b.creationIndex > a.creationIndex ? b : a))
 
-  // Spiral search outward from the anchor on a coarse grid until we find a
-  // slot. Step is sized so we explore quickly but never miss small gaps.
-  const stepX = Math.max(40, Math.floor(defaultSize.width / 2))
-  const stepY = Math.max(40, Math.floor(defaultSize.height / 2))
-  // Directions: right, down, left, up
-  const dirs: Array<[number, number]> = [
-    [1, 0],
-    [0, 1],
-    [-1, 0],
-    [0, -1],
-  ]
-  let x = anchor.x
-  let y = anchor.y
-  let legLen = 1
-  const maxRings = 80
-  for (let ring = 0; ring < maxRings; ring++) {
-    for (let d = 0; d < 4; d++) {
-      const [dx, dy] = dirs[d]
-      for (let s = 0; s < legLen; s++) {
-        x += dx * stepX
-        y += dy * stepY
-        const candidate = { x, y }
-        if (fits(candidate)) return candidate
-      }
-      if (d === 1 || d === 3) legLen++
-    }
+  // Honour explicit anchors from callers (e.g. drop position).
+  if (preferred) {
+    const snapped = { x: snap(preferred.x), y: snap(preferred.y) }
+    if (fits(snapped)) return snapped
   }
 
-  // Last-resort fallback: stack far to the right of the rightmost node.
-  const rightmost = nodeList.reduce((acc, n) => {
-    const right = n.origin.x + n.size.width
-    return right > acc ? right : acc
-  }, -Infinity)
-  return { x: rightmost + gap, y: anchor.y }
+  // Tidy tiling: consider rows of existing nodes that share the reference's
+  // Y band. For each such row, try placing the new node immediately to the
+  // right of the rightmost node in the row, aligned to the row's top.
+  // Fall back to a fresh row beneath all existing nodes.
+  const rowTolerance = Math.max(40, Math.floor(defaultSize.height / 2))
+  const rowsSeen: number[] = []
+  const orderedRowAnchors: CanvasNodeState[] = []
+  // Ensure the reference row is tried first.
+  const candidates = [reference, ...nodeList.filter((n) => n !== reference)]
+  for (const n of candidates) {
+    if (rowsSeen.some((y) => Math.abs(y - n.origin.y) < rowTolerance)) continue
+    rowsSeen.push(n.origin.y)
+    orderedRowAnchors.push(n)
+  }
+
+  for (const rowAnchor of orderedRowAnchors) {
+    const rowY = rowAnchor.origin.y
+    // Nodes that vertically overlap this row.
+    const rowNodes = nodeList.filter(
+      (n) =>
+        n.origin.y < rowY + defaultSize.height &&
+        n.origin.y + n.size.height > rowY,
+    )
+    const rightmost = rowNodes.reduce(
+      (acc, n) => Math.max(acc, n.origin.x + n.size.width),
+      -Infinity,
+    )
+    const candidate = {
+      x: snap(rightmost + gap),
+      y: snap(rowY),
+    }
+    if (fits(candidate)) return candidate
+  }
+
+  // New row below everything, left-aligned with the reference node.
+  const maxBottom = nodeList.reduce(
+    (acc, n) => Math.max(acc, n.origin.y + n.size.height),
+    -Infinity,
+  )
+  return {
+    x: snap(reference.origin.x),
+    y: snap(maxBottom + gap),
+  }
 }
 
 function rectsOverlap(a: Rect, b: Rect): boolean {
@@ -903,25 +911,98 @@ export function createCanvasStore(): UseBoundStore<StoreApi<CanvasStore>> {
 
   autoLayout() {
     const state = get()
-    const nodeList = Object.values(state.nodes).sort((a, b) => a.creationIndex - b.creationIndex)
-    if (nodeList.length === 0) return
+    const nodeList = Object.values(state.nodes).sort(
+      (a, b) => a.creationIndex - b.creationIndex,
+    )
+    const regionList = Object.values(state.regions)
+    const annotationList = Object.values(state.annotations)
+    if (
+      nodeList.length === 0 &&
+      regionList.length === 0 &&
+      annotationList.length === 0
+    ) {
+      return
+    }
 
     const containerWidth = state.containerSize.width > 0
       ? state.containerSize.width / state.zoomLevel
-      : 1200
+      : 1600
+    const containerHeight = state.containerSize.height > 0
+      ? state.containerSize.height / state.zoomLevel
+      : 1000
 
-    const positions = computeAutoLayout(
-      nodeList.map(n => ({ id: n.id, size: n.size })),
-      containerWidth,
-      40,
-    )
-
-    const updatedNodes = { ...state.nodes }
-    for (const [id, origin] of Object.entries(positions)) {
-      updatedNodes[id] = { ...updatedNodes[id], origin }
+    // Nodes-only path: uniform-size grid sized to the viewport.
+    if (regionList.length === 0 && annotationList.length === 0) {
+      const gap = 6
+      const n = nodeList.length
+      const aspect = containerWidth / Math.max(containerHeight, 1)
+      const cols = Math.max(1, Math.round(Math.sqrt(n * aspect)))
+      const rows = Math.ceil(n / cols)
+      const cellW = Math.max(
+        240,
+        (containerWidth - gap * (cols + 1)) / cols,
+      )
+      // Cap cell height by a panel-friendly aspect (≈ 4:3) so tall viewports
+      // don't stretch panels vertically.
+      const maxCellH = cellW * 0.72
+      const cellH = Math.min(
+        maxCellH,
+        Math.max(160, (containerHeight - gap * (rows + 1)) / rows),
+      )
+      get().pushHistory()
+      const updatedNodes = { ...state.nodes }
+      nodeList.forEach((node, i) => {
+        const col = i % cols
+        const row = Math.floor(i / cols)
+        updatedNodes[node.id] = {
+          ...updatedNodes[node.id],
+          origin: {
+            x: gap + col * (cellW + gap),
+            y: gap + row * (cellH + gap),
+          },
+          size: { width: cellW, height: cellH },
+        }
+      })
+      set({ nodes: updatedNodes })
+      get().zoomToFit()
+      return
     }
 
-    set({ nodes: updatedNodes })
+    const result = computeAutoLayoutAll({
+      nodes: nodeList,
+      annotations: annotationList,
+      regions: regionList,
+      containerWidth,
+      containerHeight,
+      gap: 40,
+    })
+
+    get().pushHistory()
+
+    const updatedNodes = { ...state.nodes }
+    for (const [id, origin] of Object.entries(result.nodeOrigins)) {
+      if (updatedNodes[id]) updatedNodes[id] = { ...updatedNodes[id], origin }
+    }
+
+    const updatedRegions = { ...state.regions }
+    for (const [id, origin] of Object.entries(result.regionOrigins)) {
+      if (!updatedRegions[id]) continue
+      const size = result.regionSizes[id] ?? updatedRegions[id].size
+      updatedRegions[id] = { ...updatedRegions[id], origin, size }
+    }
+
+    const updatedAnnotations = { ...state.annotations }
+    for (const [id, origin] of Object.entries(result.annotationOrigins)) {
+      if (updatedAnnotations[id]) {
+        updatedAnnotations[id] = { ...updatedAnnotations[id], origin }
+      }
+    }
+
+    set({
+      nodes: updatedNodes,
+      regions: updatedRegions,
+      annotations: updatedAnnotations,
+    })
 
     // Zoom to fit after layout
     get().zoomToFit()

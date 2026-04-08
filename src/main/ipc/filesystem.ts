@@ -7,7 +7,7 @@ import path from 'path'
 import { watch, FSWatcher } from 'chokidar'
 import { ipcMain } from 'electron'
 import log from '../logger'
-import { validatePath } from './pathValidation'
+import { validatePathStrict } from './pathValidation'
 import {
   FS_READ_FILE,
   FS_WRITE_FILE,
@@ -23,11 +23,30 @@ import {
 import { FileTreeNode, FILE_EXCLUSIONS } from '../../shared/types'
 import { sendToWindow, windowFromEvent } from '../windowRegistry'
 
-// Active chokidar file watchers keyed by "windowId:dirPath"
-const watchers: Map<string, { watcher: FSWatcher; cancelFlush?: () => void }> = new Map()
-
 // Set of exclusion names for fast lookup
 const exclusionSet = new Set(FILE_EXCLUSIONS)
+
+// ---------------------------------------------------------------------------
+// Shared watcher pool — one chokidar watcher per normalised directory path,
+// shared across any number of windows/requesters via reference counting.
+// Per-requester event listeners are tracked separately so each window only
+// receives its own events and cleanup is precise.
+// ---------------------------------------------------------------------------
+
+interface SharedWatcher {
+  watcher: FSWatcher
+  refCount: number
+  /** Per-subscriber event dispatch functions keyed by "windowId:dirPath" */
+  dispatch: Map<string, (type: string, filePath: string) => void>
+  /** cancelFlush callbacks keyed by "windowId:dirPath" */
+  cancelFlushes: Map<string, () => void>
+}
+
+/** Shared watcher pool keyed by normalised absolute directory path. */
+const sharedWatchers: Map<string, SharedWatcher> = new Map()
+
+/** Per-requester key -> normalised path, so watchStop can look up the shared entry. */
+const watcherKeys: Map<string, string> = new Map()
 
 function watcherKey(windowId: number, dirPath: string): string {
   return `${windowId}:${dirPath}`
@@ -68,11 +87,14 @@ async function readDir(dirPath: string): Promise<FileTreeNode[]> {
     const fullPath = path.join(dirPath, entry)
     let stat
     try {
-      stat = await fs.stat(fullPath)
+      stat = await fs.lstat(fullPath)
     } catch {
-      // Skip files we can't stat (permission errors, broken symlinks, etc.)
+      // Skip files we can't stat (permission errors, etc.)
       continue
     }
+
+    // Skip symlinks — they may point outside the workspace root.
+    if (stat.isSymbolicLink()) continue
 
     const isDirectory = stat.isDirectory()
     const ext = isDirectory ? '' : path.extname(entry).replace(/^\./, '')
@@ -106,19 +128,38 @@ async function readDir(dirPath: string): Promise<FileTreeNode[]> {
 function watchStart(dirPath: string, ownerWindowId: number): void {
   const key = watcherKey(ownerWindowId, dirPath)
 
-  // Stop existing watcher for this window+path if any
+  // Remove any existing subscription for this window+path first
   watchStop(dirPath, ownerWindowId)
 
-  const watcher = watch(dirPath, {
-    ignoreInitial: true,
-    depth: 1,
-    ignored: [
-      /(^|[/\\])\../, // hidden files
-      ...FILE_EXCLUSIONS.map((name) => `**/${name}/**`),
-    ],
-  })
+  let shared = sharedWatchers.get(dirPath)
 
-  // Batch file watch events to prevent IPC storms during npm install, git checkout, etc.
+  if (!shared) {
+    // First subscriber — create the underlying chokidar watcher
+    const watcher = watch(dirPath, {
+      ignoreInitial: true,
+      depth: 1,
+      ignored: [
+        /(^|[/\\])\../, // hidden files
+        ...FILE_EXCLUSIONS.map((name) => `**/${name}/**`),
+      ],
+    })
+
+    shared = {
+      watcher,
+      refCount: 0,
+      dispatch: new Map(),
+      cancelFlushes: new Map(),
+    }
+    sharedWatchers.set(dirPath, shared)
+
+    // Fan out each raw watcher event to all per-subscriber dispatch functions
+    const { dispatch } = shared
+    watcher.on('add', (fp: string) => { for (const fn of dispatch.values()) fn('create', fp) })
+    watcher.on('change', (fp: string) => { for (const fn of dispatch.values()) fn('update', fp) })
+    watcher.on('unlink', (fp: string) => { for (const fn of dispatch.values()) fn('delete', fp) })
+  }
+
+  // Register per-requester batched dispatch
   let pendingEvents = new Map<string, { type: string; path: string }>()
   let flushTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -126,59 +167,72 @@ function watchStart(dirPath: string, ownerWindowId: number): void {
     pendingEvents.set(filePath, { type, path: filePath })
     if (!flushTimer) {
       flushTimer = setTimeout(() => {
-        flushTimer = null
-        for (const event of pendingEvents.values()) {
-          sendToWindow(ownerWindowId, FS_WATCH_EVENT, event)
+        try {
+          for (const event of pendingEvents.values()) {
+            sendToWindow(ownerWindowId, FS_WATCH_EVENT, event)
+          }
+        } catch (err) {
+          log.warn('[fs-watch] flush failed:', err)
+        } finally {
+          flushTimer = null
+          pendingEvents = new Map()
         }
-        pendingEvents = new Map()
       }, 150)
     }
   }
 
-  watcher.on('add', (filePath: string) => queueEvent('create', filePath))
-  watcher.on('change', (filePath: string) => queueEvent('update', filePath))
-  watcher.on('unlink', (filePath: string) => queueEvent('delete', filePath))
+  shared.dispatch.set(key, queueEvent)
+  shared.refCount++
+  watcherKeys.set(key, dirPath)
 
-  watchers.set(key, {
-    watcher,
-    cancelFlush: () => {
-      if (flushTimer) {
-        clearTimeout(flushTimer)
-        flushTimer = null
-      }
-      pendingEvents = new Map()
-    },
+  shared.cancelFlushes.set(key, () => {
+    if (flushTimer) {
+      clearTimeout(flushTimer)
+      flushTimer = null
+    }
+    pendingEvents = new Map()
   })
 }
 
 function watchStop(dirPath: string, ownerWindowId: number): void {
   const key = watcherKey(ownerWindowId, dirPath)
-  const entry = watchers.get(key)
-  if (entry) {
-    entry.cancelFlush?.()
-    entry.watcher.close()
-    watchers.delete(key)
+  const normPath = watcherKeys.get(key)
+  if (!normPath) return
+
+  const shared = sharedWatchers.get(normPath)
+  if (shared) {
+    shared.cancelFlushes.get(key)?.()
+    shared.cancelFlushes.delete(key)
+    shared.dispatch.delete(key)
+
+    shared.refCount--
+    if (shared.refCount <= 0) {
+      shared.watcher.close()
+      sharedWatchers.delete(normPath)
+    }
   }
+  watcherKeys.delete(key)
 }
 
 /**
  * Stop all watchers owned by a specific window (called on window close).
  */
 export function stopWatchersForWindow(windowId: number): void {
+  // Collect keys first to avoid mutating the map while iterating
+  const toStop: Array<[string, number]> = []
   const prefix = `${windowId}:`
-  for (const [key, entry] of watchers) {
-    if (key.startsWith(prefix)) {
-      entry.cancelFlush?.()
-      entry.watcher.close()
-      watchers.delete(key)
-    }
+  for (const [key, normPath] of watcherKeys) {
+    if (key.startsWith(prefix)) toStop.push([normPath, windowId])
+  }
+  for (const [normPath, wid] of toStop) {
+    watchStop(normPath, wid)
   }
 }
 
 export function registerHandlers(): void {
   ipcMain.handle(FS_READ_FILE, async (_event, filePath: string) => {
     try {
-      return await readFile(validatePath(filePath))
+      return await readFile(await validatePathStrict(filePath))
     } catch (error) {
       log.error(`[${FS_READ_FILE}]`, error)
       throw error instanceof Error ? error : new Error(String(error))
@@ -187,7 +241,7 @@ export function registerHandlers(): void {
 
   ipcMain.handle(FS_WRITE_FILE, async (_event, filePath: string, content: string) => {
     try {
-      await writeFile(validatePath(filePath), content)
+      await writeFile(await validatePathStrict(filePath), content)
     } catch (error) {
       log.error(`[${FS_WRITE_FILE}]`, error)
       throw error instanceof Error ? error : new Error(String(error))
@@ -196,7 +250,7 @@ export function registerHandlers(): void {
 
   ipcMain.handle(FS_READ_DIR, async (_event, dirPath: string) => {
     try {
-      return await readDir(validatePath(dirPath))
+      return await readDir(await validatePathStrict(dirPath))
     } catch (error) {
       log.error(`[${FS_READ_DIR}]`, error)
       throw error instanceof Error ? error : new Error(String(error))
@@ -205,7 +259,7 @@ export function registerHandlers(): void {
 
   ipcMain.handle(FS_WATCH_START, async (event, dirPath: string) => {
     try {
-      const validPath = validatePath(dirPath)
+      const validPath = await validatePathStrict(dirPath)
       const win = windowFromEvent(event)
       if (win) {
         watchStart(validPath, win.id)
@@ -218,7 +272,7 @@ export function registerHandlers(): void {
 
   ipcMain.handle(FS_WATCH_STOP, async (event, dirPath: string) => {
     try {
-      const validPath = validatePath(dirPath)
+      const validPath = await validatePathStrict(dirPath)
       const win = windowFromEvent(event)
       if (win) {
         watchStop(validPath, win.id)
@@ -231,7 +285,13 @@ export function registerHandlers(): void {
 
   ipcMain.handle(FS_STAT, async (_event, filePath: string) => {
     try {
-      const stat = await fs.stat(validatePath(filePath))
+      // Use lstat so symlinks are detected; validatePathStrict already resolves
+      // the real path, but we stat the original so the caller gets correct info.
+      const validPath = await validatePathStrict(filePath)
+      const stat = await fs.lstat(validPath)
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Access denied: "${filePath}" is a symbolic link`)
+      }
       return { isDirectory: stat.isDirectory(), isFile: stat.isFile() }
     } catch (error) {
       log.error(`[${FS_STAT}]`, error)
@@ -241,9 +301,13 @@ export function registerHandlers(): void {
 
   ipcMain.handle(FS_DELETE, async (_event, filePath: string) => {
     try {
-      const validPath = validatePath(filePath)
-      const stat = await fs.stat(validPath)
-      if (stat.isDirectory()) {
+      const validPath = await validatePathStrict(filePath)
+      // Use lstat so we never follow a symlink to determine type; delete the
+      // symlink itself if one somehow passed validation.
+      const stat = await fs.lstat(validPath)
+      if (stat.isSymbolicLink()) {
+        await fs.unlink(validPath)
+      } else if (stat.isDirectory()) {
         await fs.rm(validPath, { recursive: true })
       } else {
         await fs.unlink(validPath)
@@ -256,7 +320,7 @@ export function registerHandlers(): void {
 
   ipcMain.handle(FS_RENAME, async (_event, oldPath: string, newPath: string) => {
     try {
-      await fs.rename(validatePath(oldPath), validatePath(newPath))
+      await fs.rename(await validatePathStrict(oldPath), await validatePathStrict(newPath))
     } catch (error) {
       log.error(`[${FS_RENAME}]`, error)
       throw error instanceof Error ? error : new Error(String(error))
@@ -265,7 +329,7 @@ export function registerHandlers(): void {
 
   ipcMain.handle(FS_MKDIR, async (_event, dirPath: string) => {
     try {
-      await fs.mkdir(validatePath(dirPath), { recursive: true })
+      await fs.mkdir(await validatePathStrict(dirPath), { recursive: true })
     } catch (error) {
       log.error(`[${FS_MKDIR}]`, error)
       throw error instanceof Error ? error : new Error(String(error))

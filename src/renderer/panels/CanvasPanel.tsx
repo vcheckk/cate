@@ -140,6 +140,11 @@ const CanvasNodeWrapper = React.memo(({ nodeId, canvasPanelId, zoomLevel, render
     }
   }, [storeKey])
 
+  const renderPanel = useCallback(
+    (panelId: string) => renderPanelContent?.(panelId, nodeId, zoomLevel) ?? null,
+    [renderPanelContent, nodeId, zoomLevel],
+  )
+
   if (!node) return null
 
   // Derive a fallback title from the seed panelId for CanvasNode's header
@@ -151,7 +156,7 @@ const CanvasNodeWrapper = React.memo(({ nodeId, canvasPanelId, zoomLevel, render
       isFocused={isFocused}
       zoomLevel={zoomLevel}
       dockStoreApi={dockStoreApi}
-      renderPanel={(panelId) => renderPanelContent?.(panelId, node.id, zoomLevel) ?? null}
+      renderPanel={renderPanel}
       title={firstPanel?.title}
     />
   )
@@ -282,6 +287,10 @@ export default function CanvasPanel({ panelId, workspaceId, nodeId, renderPanelC
     store.getState().addAnnotation('textLabel', getViewCenter())
   }, [store, getViewCenter])
 
+  const onAutoLayout = useCallback(() => {
+    store.getState().autoLayout()
+  }, [store])
+
   return (
     <CanvasStoreProvider store={store}>
       <div className="relative w-full h-full" onPointerDown={handlePointerDown}>
@@ -315,6 +324,7 @@ export default function CanvasPanel({ panelId, workspaceId, nodeId, renderPanelC
           onNewRegion={onNewRegion}
           onNewStickyNote={onNewStickyNote}
           onNewTextLabel={onNewTextLabel}
+          onAutoLayout={onAutoLayout}
           onZoomToFit={onZoomToFit}
           onZoomIn={onZoomIn}
           onZoomOut={onZoomOut}

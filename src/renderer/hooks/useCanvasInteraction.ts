@@ -65,6 +65,10 @@ export function useCanvasInteraction(
   // Wheel-pan throttle refs
   const panRafId = useRef<number>(0)
   const pendingPanDelta = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  // Wheel-pan canvas-interacting class management
+  // We add the class when a wheel pan starts and remove it after the wheel goes quiet.
+  const wheelPanActive = useRef(false)
+  const wheelPanEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [canvasContextMenu, setCanvasContextMenu] =
     useState<CanvasContextMenuState | null>(null)
@@ -84,9 +88,19 @@ export function useCanvasInteraction(
         cancelAnimationFrame(zoomRafId.current)
         zoomRafId.current = 0
       }
+      // Reset zoom target so a remount doesn't fire a stale animation
+      targetZoom.current = null
       if (panRafId.current) {
         cancelAnimationFrame(panRafId.current)
         panRafId.current = 0
+      }
+      if (wheelPanEndTimer.current) {
+        clearTimeout(wheelPanEndTimer.current)
+        wheelPanEndTimer.current = null
+      }
+      if (wheelPanActive.current) {
+        document.body.classList.remove('canvas-interacting')
+        wheelPanActive.current = false
       }
     }
   }, [])
@@ -216,7 +230,20 @@ export function useCanvasInteraction(
           zoomRafId.current = requestAnimationFrame(smoothZoomTick)
         }
       } else {
-        // Two-finger scroll = pan — accumulate deltas and apply once per frame
+        // Two-finger scroll = pan — accumulate deltas and apply once per frame.
+        // Apply canvas-interacting class so iframes/webviews/monaco/xterm don't
+        // eat hit-testing while panning. Remove it ~150ms after the wheel goes quiet.
+        if (!wheelPanActive.current) {
+          wheelPanActive.current = true
+          document.body.classList.add('canvas-interacting')
+        }
+        if (wheelPanEndTimer.current) clearTimeout(wheelPanEndTimer.current)
+        wheelPanEndTimer.current = setTimeout(() => {
+          wheelPanEndTimer.current = null
+          wheelPanActive.current = false
+          document.body.classList.remove('canvas-interacting')
+        }, 150)
+
         pendingPanDelta.current.x += e.deltaX
         pendingPanDelta.current.y += e.deltaY
         if (!panRafId.current) {

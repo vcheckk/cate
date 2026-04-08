@@ -62,15 +62,10 @@ function isUrl(input: string): boolean {
 }
 
 /** Normalize a URL string, prepending a protocol if none present.
- *  Uses http:// for localhost/127.0.0.1/[::1], https:// for everything else.
- *  Also downgrades https:// to http:// for local addresses. */
+ *  Uses http:// for localhost/127.0.0.1/[::1], https:// for everything else. */
 function normalizeUrl(input: string): string {
   const trimmed = input.trim()
   if (trimmed.startsWith('about:')) return trimmed
-  // Downgrade https to http for local addresses
-  if (/^https:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(trimmed)) {
-    return trimmed.replace('https://', 'http://')
-  }
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     return trimmed
   }
@@ -249,20 +244,50 @@ export default function BrowserPanel({
       setIsLoading(false)
     }
 
+    const onWillNavigate = (event: any) => {
+      try {
+        const { protocol } = new URL(event.url)
+        if (protocol !== 'http:' && protocol !== 'https:') {
+          event.preventDefault()
+          console.warn('[BrowserPanel] Blocked navigation to non-http(s) URL:', event.url)
+        }
+      } catch {
+        event.preventDefault()
+      }
+    }
+
+    const onNewWindow = (event: any) => {
+      event.preventDefault()
+      const url = event.url ?? event.detail?.url
+      if (url) {
+        console.log('[BrowserPanel] Blocked new-window for URL:', url)
+      }
+    }
+
     webview.addEventListener('did-navigate', onDidNavigate)
     webview.addEventListener('did-navigate-in-page', onDidNavigateInPage)
     webview.addEventListener('page-title-updated', onPageTitleUpdated)
     webview.addEventListener('did-fail-load', onDidFailLoad)
     webview.addEventListener('did-start-loading', onDidStartLoading)
     webview.addEventListener('did-stop-loading', onDidStopLoading)
+    webview.addEventListener('will-navigate', onWillNavigate)
+    webview.addEventListener('new-window', onNewWindow)
 
     return () => {
+      try {
+        // May throw if webview was never attached / dom-ready before unmount
+        webview.loadURL('about:blank')
+      } catch {
+        // ignore — webview is being torn down anyway
+      }
       webview.removeEventListener('did-navigate', onDidNavigate)
       webview.removeEventListener('did-navigate-in-page', onDidNavigateInPage)
       webview.removeEventListener('page-title-updated', onPageTitleUpdated)
       webview.removeEventListener('did-fail-load', onDidFailLoad)
       webview.removeEventListener('did-start-loading', onDidStartLoading)
       webview.removeEventListener('did-stop-loading', onDidStopLoading)
+      webview.removeEventListener('will-navigate', onWillNavigate)
+      webview.removeEventListener('new-window', onNewWindow)
     }
   }, [panelId, workspaceId, updatePanelTitle, updatePanelUrl])
 
@@ -336,7 +361,7 @@ export default function BrowserPanel({
           ref={webviewRef as any}
           src={initialUrl}
           className={`w-full h-full ${loadError ? 'hidden' : ''}`}
-          allowpopups={true as any}
+          partition={`persist:browser-${panelId}`}
         />
 
         {/* Screenshot thumbnail */}

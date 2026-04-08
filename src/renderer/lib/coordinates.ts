@@ -23,9 +23,12 @@ export function canvasToView(point: Point, zoom: number, offset: Point): Point {
  *   canvasPoint = (viewPoint - offset) / zoom
  */
 export function viewToCanvas(point: Point, zoom: number, offset: Point): Point {
+  // Guard against zero/NaN zoom — corrupt zoom would propagate NaN through
+  // every node origin and break the canvas. Floor at 0.01.
+  const safeZoom = Number.isFinite(zoom) && zoom > 0.01 ? zoom : 0.01
   return {
-    x: (point.x - offset.x) / zoom,
-    y: (point.y - offset.y) / zoom,
+    x: (point.x - offset.x) / safeZoom,
+    y: (point.y - offset.y) / safeZoom,
   }
 }
 

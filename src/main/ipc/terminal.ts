@@ -8,6 +8,7 @@ import os from 'os'
 import fs from 'fs'
 import path from 'path'
 import { execFile } from 'child_process'
+import { validateCwd } from './pathValidation'
 import {
   TERMINAL_CREATE,
   TERMINAL_WRITE,
@@ -26,6 +27,11 @@ import { getShellEnv } from '../shellEnv'
 
 // Active terminal PTY instances keyed by terminal ID
 const terminals: Map<string, IPty> = new Map()
+
+// Set true during app shutdown so PTY data/exit callbacks no-op instead of
+// calling into a torn-down JS environment (which aborts via node-pty's
+// ThreadSafeFunction CallJS throwing during Environment::CleanupHandles).
+let shuttingDown = false
 
 // Shell PIDs keyed by terminal ID — exported for shell.ts process monitor
 export const terminalPids: Map<string, number> = new Map()
@@ -65,8 +71,13 @@ export function beginTerminalTransfer(ptyId: string, targetWindowId: number): vo
     // Flush buffer to whatever window currently owns the terminal
     const ownerWindowId = terminalOwners.get(ptyId)
     if (ownerWindowId != null) {
-      for (const chunk of state.buffer) {
-        sendToWindow(ownerWindowId, TERMINAL_DATA, ptyId, chunk.toString())
+      try {
+        for (const chunk of state.buffer) {
+          sendToWindow(ownerWindowId, TERMINAL_DATA, ptyId, chunk.toString())
+        }
+      } catch {
+        // Owner window may have been destroyed in the meantime — drop the
+        // buffered data rather than crashing the transfer cleanup.
       }
     }
     transferStates.delete(ptyId)
@@ -143,6 +154,7 @@ function createTerminal(
   let flushTimer: ReturnType<typeof setTimeout> | null = null
 
   ptyProcess.onData((data: string) => {
+    if (shuttingDown) return
     // Log to disk for session restore
     const logger = getOrCreateLogger(id)
     logger.append(data)
@@ -176,6 +188,7 @@ function createTerminal(
   })
 
   ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
+    if (shuttingDown) return
     const windowId = terminalOwners.get(id)
     terminals.delete(id)
     terminalPids.delete(id)
@@ -226,8 +239,25 @@ export function registerHandlers(): void {
       options: { cols: number; rows: number; cwd?: string; shell?: string },
     ): Promise<string> => {
       const id = `terminal-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-      const shell = options.shell || process.env.SHELL || '/bin/zsh'
-      const cwd = options.cwd || os.homedir()
+
+      const ALLOWED_SHELLS = new Set(['bash', 'zsh', 'sh', 'fish', 'dash', 'ksh'])
+      let shell: string
+      if (options.shell) {
+        const shellBase = path.basename(options.shell)
+        if (!ALLOWED_SHELLS.has(shellBase)) {
+          throw new Error(`Shell not allowed: ${options.shell}`)
+        }
+        shell = options.shell
+      } else {
+        shell = process.env.SHELL || '/bin/zsh'
+      }
+
+      let cwd: string
+      if (options.cwd) {
+        cwd = validateCwd(options.cwd)
+      } else {
+        cwd = os.homedir()
+      }
       const win = windowFromEvent(event)
       const windowId = win?.id ?? -1
       createTerminal(id, shell, cwd, options.cols, options.rows, {}, windowId)
@@ -305,6 +335,26 @@ export function registerHandlers(): void {
     const logger = new TerminalLogger(terminalId)
     logger.delete()
   })
+}
+
+/**
+ * Kill all active PTY processes. Called on app quit to avoid node-pty's
+ * ThreadSafeFunction firing into a torn-down JS environment (which aborts
+ * the process via Napi::Error::ThrowAsJavaScriptException during
+ * Environment::CleanupHandles).
+ */
+export function killAllTerminals(): void {
+  shuttingDown = true
+  for (const [id, pty] of terminals) {
+    try {
+      pty.kill()
+    } catch {
+      // ignore
+    }
+    terminals.delete(id)
+    terminalPids.delete(id)
+    terminalOwners.delete(id)
+  }
 }
 
 export { getTerminalPid, flushAllLoggers }

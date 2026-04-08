@@ -80,31 +80,31 @@ export const TERMINAL_THEME_DARK_COLD = {
   brightWhite: '#f2f2f7',
 }
 
-/** Light Subtle — Solarized-light palette on the warm cream surface-4 background. */
+/** Light Subtle — Bone/Taupe/Azure palette tuned for the warm Bone background. */
 export const TERMINAL_THEME_LIGHT_SUBTLE = {
-  background: '#ebe3c8',
-  foreground: '#1c1813',
-  cursor: '#4a3f30',
-  cursorAccent: '#ebe3c8',
-  selectionBackground: '#d6cfb6',
-  selectionForeground: '#1c1813',
-  // Solarized-inspired ANSI, tuned for readability on warm cream.
-  black: '#073642',
-  red: '#dc322f',
-  green: '#859900',
+  background: '#ddd5ca',
+  foreground: '#38322b',
+  cursor: '#3c7ef0',
+  cursorAccent: '#ddd5ca',
+  selectionBackground: '#b1a696',
+  selectionForeground: '#38322b',
+  // ANSI tuned for readability on Bone, with Azure/Blue Slate accents.
+  black: '#38322b',
+  red: '#c04030',
+  green: '#4a8f3a',
   yellow: '#b58900',
-  blue: '#268bd2',
-  magenta: '#d33682',
-  cyan: '#2aa198',
-  white: '#657b83',
-  brightBlack: '#586e75',
+  blue: '#3c7ef0',
+  magenta: '#a04a7a',
+  cyan: '#5e747f',
+  white: '#8a8274',
+  brightBlack: '#5e747f',
   brightRed: '#cb4b16',
-  brightGreen: '#93a1a1',
-  brightYellow: '#b58900',
-  brightBlue: '#6c71c4',
-  brightMagenta: '#d33682',
-  brightCyan: '#2aa198',
-  brightWhite: '#1c1813',
+  brightGreen: '#5fa34a',
+  brightYellow: '#c89a1f',
+  brightBlue: '#5e93f4',
+  brightMagenta: '#b85a8a',
+  brightCyan: '#7a8f99',
+  brightWhite: '#38322b',
 }
 
 /** Map a resolved theme name to the corresponding xterm theme object. */
@@ -333,11 +333,11 @@ async function getOrCreate(panelId: string, opts: CreateOpts): Promise<RegistryE
     electronAPI.shellRegisterTerminal(ptyId).catch((err) => log.warn('[terminal] Shell register failed:', err))
     useStatusStore.getState().registerTerminal(ptyId, opts.workspaceId)
 
-    // 11. Write initialInput after a short delay so the shell prompt is ready
+    // 11. Write initialInput immediately — the PTY buffers writes until the
+    //     shell is ready to consume them, so a fixed setTimeout was both
+    //     fragile (slow systems) and unnecessary.
     if (opts.initialInput) {
-      setTimeout(() => {
-        terminal.write(opts.initialInput!)
-      }, 100)
+      terminal.write(opts.initialInput)
     }
 
     // 12. Replay scrollback log if this terminal was restored from a session

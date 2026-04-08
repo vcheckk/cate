@@ -11,7 +11,7 @@ import { useStore } from 'zustand'
 import type { StoreApi } from 'zustand'
 import type { NodeActivityState, DockLayoutNode, PanelType } from '../../shared/types'
 import { isMaximized as checkMaximized } from '../../shared/types'
-import { useCanvasStoreContext, useCanvasStoreApi } from '../stores/CanvasStoreContext'
+import { useCanvasStoreContext, useCanvasStoreApi, shallow } from '../stores/CanvasStoreContext'
 import { useAppStore, useSelectedWorkspace } from '../stores/appStore'
 import { useNodeDrag } from '../hooks/useNodeDrag'
 import { useNodeResize, detectEdge, getCursorForEdge } from '../hooks/useNodeResize'
@@ -167,7 +167,22 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
   const [isAnimatingLayout, setIsAnimatingLayout] = useState(false)
   const animationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const node = useCanvasStoreContext((s) => s.nodes[nodeId])
+  const node = useCanvasStoreContext(
+    (s) => s.nodes[nodeId],
+    (a, b) => {
+      if (a === b) return true
+      if (!a || !b) return false
+      return (
+        a.origin.x === b.origin.x &&
+        a.origin.y === b.origin.y &&
+        a.size.width === b.size.width &&
+        a.size.height === b.size.height &&
+        a.zOrder === b.zOrder &&
+        a.isPinned === b.isPinned &&
+        a.animationState === b.animationState
+      )
+    },
+  )
   const focusNode = useCanvasStoreContext((s) => s.focusNode)
   const removeNode = useCanvasStoreContext((s) => s.removeNode)
   const toggleMaximize = useCanvasStoreContext((s) => s.toggleMaximize)
@@ -506,7 +521,7 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
       outline: activityOutline(activityState),
       outlineOffset: -1,
       animation: isPulsing ? 'pulseActivity 1s ease-in-out infinite alternate' : undefined,
-      backgroundColor: 'var(--surface-3)',
+      backgroundColor: 'var(--node-bg-active)',
       transition: baseTransition + layoutTransition,
       transform: isEntering ? 'scale(0.85)' : isExiting ? 'scale(0.9)' : 'scale(1)',
       opacity: isEntering ? 0 : isExiting ? 0 : 1,
@@ -615,7 +630,7 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
           style={{
             position: 'absolute',
             inset: 0,
-            backgroundColor: 'var(--shadow-node)',
+            backgroundColor: 'var(--node-dim-overlay)',
             pointerEvents: isFocused ? 'none' : 'auto',
             cursor: isFocused ? undefined : 'default',
             zIndex: 1,
@@ -640,4 +655,14 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({
   )
 }
 
-export default React.memo(CanvasNode)
+export default React.memo(CanvasNode, (prev, next) => {
+  return (
+    prev.nodeId === next.nodeId &&
+    prev.isFocused === next.isFocused &&
+    prev.zoomLevel === next.zoomLevel &&
+    prev.activityState === next.activityState &&
+    prev.dockStoreApi === next.dockStoreApi &&
+    prev.renderPanel === next.renderPanel &&
+    prev.title === next.title
+  )
+})

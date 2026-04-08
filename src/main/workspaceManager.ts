@@ -6,6 +6,10 @@
 // =============================================================================
 
 import { ipcMain } from 'electron'
+import { randomUUID } from 'crypto'
+import * as fs from 'fs'
+import * as path from 'path'
+import * as os from 'os'
 import log from './logger'
 import {
   WORKSPACE_LIST,
@@ -22,25 +26,44 @@ import { addAllowedRoot } from './ipc/pathValidation'
 // In-memory workspace list — authoritative source of truth
 const workspaces: Map<string, WorkspaceInfo> = new Map()
 
-// Accent colors cycled for new workspaces
-const WORKSPACE_COLORS = [
-  '#0080ff', // pure blue
-  '#ff8000', // pure orange
-  '#00e000', // pure green
-  '#aa00ff', // pure violet
-  '#ff0000', // pure red
-  '#00e0e0', // pure cyan
-]
-let colorIndex = 0
+// ---------------------------------------------------------------------------
+// Security helpers
+// ---------------------------------------------------------------------------
 
-function nextColor(): string {
-  const color = WORKSPACE_COLORS[colorIndex % WORKSPACE_COLORS.length]
-  colorIndex++
-  return color
+/** Accepts standard UUIDs (from randomUUID) and any safe alphanumeric id. */
+const WORKSPACE_ID_RE = /^[a-zA-Z0-9_-]{8,64}$/
+
+function isValidWorkspaceId(id: string): boolean {
+  return WORKSPACE_ID_RE.test(id)
+}
+
+/**
+ * Returns true when rootPath is a real directory that lives inside the
+ * current user's home directory. Rejects anything outside ~/ to prevent a
+ * tampered session file from registering arbitrary system paths.
+ */
+function isValidRootPath(rootPath: string): boolean {
+  try {
+    const resolved = path.resolve(rootPath)
+    const home = os.homedir()
+    if (!resolved.startsWith(home + path.sep) && resolved !== home) {
+      log.warn('workspaceManager: rootPath outside home dir, rejecting: %s', rootPath)
+      return false
+    }
+    const stat = fs.statSync(resolved)
+    if (!stat.isDirectory()) {
+      log.warn('workspaceManager: rootPath is not a directory, rejecting: %s', rootPath)
+      return false
+    }
+    return true
+  } catch {
+    log.warn('workspaceManager: rootPath does not exist or is unreadable, rejecting: %s', rootPath)
+    return false
+  }
 }
 
 function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  return randomUUID()
 }
 
 // -----------------------------------------------------------------------------
@@ -56,34 +79,54 @@ function getWorkspace(id: string): WorkspaceInfo | null {
 }
 
 function createWorkspace(name?: string, rootPath?: string, id?: string): WorkspaceInfo {
+  // Validate caller-supplied id; fall back to a fresh UUID if invalid.
+  const resolvedId = id && isValidWorkspaceId(id) ? id : generateId()
+  if (id && resolvedId !== id) {
+    log.warn('workspaceManager: invalid workspace id supplied, generating new one (supplied: %s)', id)
+  }
+
   const info: WorkspaceInfo = {
-    id: id ?? generateId(),
+    id: resolvedId,
     name: name ?? 'Workspace',
-    color: nextColor(),
+    color: '',
     rootPath: rootPath ?? '',
   }
   workspaces.set(info.id, info)
   log.info('Workspace created: %s (%s)', info.id, info.rootPath || 'no root')
   // Register workspace root as an allowed path for filesystem/git access
-  if (info.rootPath) {
+  // — only after validating the path is a real directory inside ~/
+  if (info.rootPath && isValidRootPath(info.rootPath)) {
     addAllowedRoot(info.rootPath)
+  } else if (info.rootPath) {
+    log.warn('workspaceManager: rootPath rejected for new workspace %s: %s', info.id, info.rootPath)
   }
   return info
 }
 
 function updateWorkspace(id: string, changes: Partial<Omit<WorkspaceInfo, 'id'>>): WorkspaceInfo | null {
+  if (!isValidWorkspaceId(id)) {
+    log.warn('workspaceManager: updateWorkspace called with invalid id: %s', id)
+    return null
+  }
   const existing = workspaces.get(id)
   if (!existing) return null
   const updated = { ...existing, ...changes }
   workspaces.set(id, updated)
   // Register updated workspace root as an allowed path
-  if (updated.rootPath) {
+  // — only after validating the path is a real directory inside ~/
+  if (updated.rootPath && isValidRootPath(updated.rootPath)) {
     addAllowedRoot(updated.rootPath)
+  } else if (updated.rootPath) {
+    log.warn('workspaceManager: rootPath rejected for updated workspace %s: %s', id, updated.rootPath)
   }
   return updated
 }
 
 function removeWorkspace(id: string): boolean {
+  if (!isValidWorkspaceId(id)) {
+    log.warn('workspaceManager: removeWorkspace called with invalid id: %s', id)
+    return false
+  }
   const removed = workspaces.delete(id)
   if (removed) log.info('Workspace removed: %s', id)
   return removed

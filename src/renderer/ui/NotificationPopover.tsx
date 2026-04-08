@@ -73,7 +73,8 @@ export const NotificationBell: React.FC = () => {
       {open && createPortal(
         <div
           ref={popoverRef}
-          className="fixed z-[9999] rounded-md border border-subtle bg-surface-5 backdrop-blur-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150"
+          data-theme="dark-warm"
+          className="fixed z-[9999] rounded-md border border-subtle bg-surface-4 backdrop-blur-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150"
           style={{ top: position.top, left: position.left, width: 220 }}
         >
           <div className="px-3 py-2 border-b border-subtle flex items-center justify-between">

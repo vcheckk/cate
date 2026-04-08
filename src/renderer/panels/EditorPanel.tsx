@@ -17,19 +17,65 @@ import { getResolvedTheme, subscribeTheme } from '../lib/themeManager'
 // -----------------------------------------------------------------------------
 
 window.MonacoEnvironment = {
-  getWorker: function (_: string, label: string) {
-    return new Worker(
-      new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url),
-      { type: 'module' },
-    )
+  getWorker: function (_: string, _label: string) {
+    try {
+      return new Worker(
+        new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url),
+        { type: 'module' },
+      )
+    } catch (err) {
+      log.error('[EditorPanel] Failed to create Monaco worker:', err)
+      throw err
+    }
   },
 }
+
+// LRU cap on Monaco model cache so long sessions don't accumulate models for
+// every file the user has ever opened. Oldest entries are disposed on eviction.
+const MODEL_CACHE_LIMIT = 20
 
 // -----------------------------------------------------------------------------
 // Module-level model cache keyed by file path
 // -----------------------------------------------------------------------------
 
 const modelCache = new Map<string, monaco.editor.ITextModel>()
+// Counts how many mounted EditorPanel instances are actively using a cached model.
+const modelRefCount = new Map<string, number>()
+
+function rememberModel(filePath: string, model: monaco.editor.ITextModel): void {
+  // Map preserves insertion order — re-insert to mark as most recent.
+  modelCache.delete(filePath)
+  modelCache.set(filePath, model)
+  while (modelCache.size > MODEL_CACHE_LIMIT) {
+    const oldestKey = modelCache.keys().next().value
+    if (oldestKey === undefined) break
+    // Don't evict a model that is still in use by a mounted editor.
+    if ((modelRefCount.get(oldestKey) ?? 0) > 0) break
+    const oldest = modelCache.get(oldestKey)
+    modelCache.delete(oldestKey)
+    if (oldest && !oldest.isDisposed()) {
+      try { oldest.dispose() } catch { /* noop */ }
+    }
+  }
+}
+
+function retainModel(filePath: string): void {
+  modelRefCount.set(filePath, (modelRefCount.get(filePath) ?? 0) + 1)
+}
+
+function releaseModel(filePath: string): void {
+  const count = (modelRefCount.get(filePath) ?? 0) - 1
+  if (count <= 0) {
+    modelRefCount.delete(filePath)
+    const model = modelCache.get(filePath)
+    if (model && !model.isDisposed()) {
+      modelCache.delete(filePath)
+      try { model.dispose() } catch { /* noop */ }
+    }
+  } else {
+    modelRefCount.set(filePath, count)
+  }
+}
 
 // -----------------------------------------------------------------------------
 // Custom Monaco themes — one per app theme.
@@ -75,16 +121,16 @@ function ensureCateThemes() {
     inherit: true,
     rules: [],
     colors: {
-      'editor.background': '#faf4e3',
-      'editorGutter.background': '#faf4e3',
-      'minimap.background': '#faf4e3',
-      'editor.foreground': '#1c1813',
-      'editorLineNumber.foreground': '#7a6d58',
-      'editorLineNumber.activeForeground': '#1c1813',
-      'editor.lineHighlightBackground': '#f2ebd3',
+      'editor.background': '#ddd5ca',
+      'editorGutter.background': '#ddd5ca',
+      'minimap.background': '#ddd5ca',
+      'editor.foreground': '#38322b',
+      'editorLineNumber.foreground': '#8a8274',
+      'editorLineNumber.activeForeground': '#38322b',
+      'editor.lineHighlightBackground': '#e5dfd6',
       'editor.lineHighlightBorder': '#00000000',
-      'editor.selectionBackground': '#e4dcbe',
-      'editorCursor.foreground': '#268bd2',
+      'editor.selectionBackground': '#c8bfb0',
+      'editorCursor.foreground': '#3c7ef0',
       'contrastBorder': '#00000000',
     },
   })
@@ -231,15 +277,10 @@ export default function EditorPanel({
 
   filePathRef.current = filePath
 
-  const diffMode = useAppStore((s) => {
-    const ws = s.workspaces.find(w => w.id === workspaceId)
-    return ws?.panels[panelId]?.diffMode
-  })
-
-  const rootPath = useAppStore((s) => {
-    const ws = s.workspaces.find(w => w.id === workspaceId)
-    return ws?.rootPath
-  })
+  const workspaces = useAppStore((s) => s.workspaces)
+  const ws = workspaces.find((w) => w.id === workspaceId)
+  const diffMode = ws?.panels[panelId]?.diffMode
+  const rootPath = ws?.rootPath
 
   // ---------------------------------------------------------------------------
   // Save handler (regular editor only)
@@ -370,10 +411,13 @@ export default function EditorPanel({
 
     let cancelled = false
     let createdModel: monaco.editor.ITextModel | null = null
+    let modelRetained = false
 
     if (filePath) {
       const cached = modelCache.get(filePath)
       if (cached && !cached.isDisposed()) {
+        retainModel(filePath)
+        modelRetained = true
         editor.setModel(cached)
       } else {
         const language = detectLanguage(filePath)
@@ -383,7 +427,9 @@ export default function EditorPanel({
             if (cancelled) return
             const model = monaco.editor.createModel(content, language)
             createdModel = model
-            modelCache.set(filePath, model)
+            rememberModel(filePath, model)
+            retainModel(filePath)
+            modelRetained = true
             editor.setModel(model)
           })
           .catch((err) => {
@@ -391,7 +437,9 @@ export default function EditorPanel({
             log.error('[EditorPanel] Failed to read file:', err)
             const model = monaco.editor.createModel('', language)
             createdModel = model
-            modelCache.set(filePath, model)
+            rememberModel(filePath, model)
+            retainModel(filePath)
+            modelRetained = true
             editor.setModel(model)
           })
       }
@@ -419,8 +467,9 @@ export default function EditorPanel({
       cancelled = true
       layoutObserver.disconnect()
       changeDisposable.dispose()
-      if (createdModel && !createdModel.isDisposed()) {
-        if (filePath) modelCache.delete(filePath)
+      if (filePath && modelRetained) {
+        releaseModel(filePath)
+      } else if (!filePath && createdModel && !createdModel.isDisposed()) {
         createdModel.dispose()
       }
       editor.dispose()

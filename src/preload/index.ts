@@ -60,6 +60,7 @@ import {
   DIALOG_OPEN_FOLDER,
   DIALOG_SAVE_FILE,
   DIALOG_CONFIRM_UNSAVED,
+  DIALOG_CONFIRM_CLOSE_CANVAS,
   RECENT_PROJECTS_GET,
   RECENT_PROJECTS_ADD,
   LAYOUT_SAVE,
@@ -477,6 +478,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   confirmUnsavedChanges(payload: { fileName?: string; multiple?: boolean }): Promise<'save' | 'discard' | 'cancel'> {
     return ipcRenderer.invoke(DIALOG_CONFIRM_UNSAVED, payload)
+  },
+
+  confirmCloseCanvas(payload: { panelCount: number; isLast: boolean }): Promise<'move' | 'delete' | 'close' | 'cancel'> {
+    return ipcRenderer.invoke(DIALOG_CONFIRM_CLOSE_CANVAS, payload)
   },
 
   // ---------------------------------------------------------------------------

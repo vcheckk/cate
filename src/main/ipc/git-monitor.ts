@@ -4,6 +4,7 @@
 
 import { execFile } from 'child_process'
 import { ipcMain } from 'electron'
+import log from '../logger'
 import { validateCwd } from './pathValidation'
 import {
   GIT_BRANCH_UPDATE,
@@ -17,6 +18,8 @@ const POLL_INTERVAL_MS = 5000
 interface MonitorEntry {
   interval: ReturnType<typeof setInterval>
   ownerWindowId: number
+  /** AbortController for the currently in-flight execFile calls. */
+  abortController: AbortController | null
 }
 
 const activeMonitors: Map<string, MonitorEntry> = new Map()
@@ -26,29 +29,55 @@ function pollGitStatus(
   ownerWindowId: number,
   workspaceId: string,
   rootPath: string,
+  entry: MonitorEntry,
 ): void {
-  execFile('git', ['-C', rootPath, 'branch', '--show-current'], {
-    timeout: 3000,
-  }, (err, branchOut) => {
-    if (err) return
+  // Abort any previous in-flight calls for this workspace
+  entry.abortController?.abort()
+  const ac = new AbortController()
+  entry.abortController = ac
 
-    const branch = branchOut.trim()
-    if (!branch) return
+  execFile(
+    'git',
+    ['-C', rootPath, 'branch', '--show-current'],
+    { timeout: 3000, signal: ac.signal },
+    (err, branchOut, branchErr) => {
+      if (err) {
+        // Ignore AbortError — this is intentional cancellation on stop
+        if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR') return
+        log.debug('git branch failed for %s: %s', rootPath, branchErr || err.message)
+        return
+      }
 
-    execFile('git', ['-C', rootPath, 'status', '--porcelain', '-uno'], {
-      timeout: 3000,
-    }, (err2, statusOut) => {
-      if (err2) return
+      const branch = branchOut.trim()
+      if (!branch) return
 
-      const isDirty = statusOut.trim().length > 0
+      execFile(
+        'git',
+        ['-C', rootPath, 'status', '--porcelain', '-uno'],
+        { timeout: 3000, signal: ac.signal },
+        (err2, statusOut, statusErr) => {
+          if (err2) {
+            if ((err2 as NodeJS.ErrnoException).code === 'ABORT_ERR') return
+            log.debug('git status failed for %s: %s', rootPath, statusErr || err2.message)
+            return
+          }
 
-      const prev = lastState.get(workspaceId)
-      if (prev && prev.branch === branch && prev.isDirty === isDirty) return
+          // Clear the in-flight controller now that this poll completed
+          if (entry.abortController === ac) {
+            entry.abortController = null
+          }
 
-      lastState.set(workspaceId, { branch, isDirty })
-      sendToWindow(ownerWindowId, GIT_BRANCH_UPDATE, workspaceId, branch, isDirty)
-    })
-  })
+          const isDirty = statusOut.trim().length > 0
+
+          const prev = lastState.get(workspaceId)
+          if (prev && prev.branch === branch && prev.isDirty === isDirty) return
+
+          lastState.set(workspaceId, { branch, isDirty })
+          sendToWindow(ownerWindowId, GIT_BRANCH_UPDATE, workspaceId, branch, isDirty)
+        },
+      )
+    },
+  )
 }
 
 /**
@@ -58,6 +87,7 @@ export function stopMonitorsForWindow(windowId: number): void {
   for (const [workspaceId, entry] of activeMonitors) {
     if (entry.ownerWindowId === windowId) {
       clearInterval(entry.interval)
+      entry.abortController?.abort()
       activeMonitors.delete(workspaceId)
       lastState.delete(workspaceId)
     }
@@ -70,23 +100,32 @@ export function registerHandlers(): void {
     const existing = activeMonitors.get(workspaceId)
     if (existing) {
       clearInterval(existing.interval)
+      existing.abortController?.abort()
     }
 
     const win = windowFromEvent(event)
     const ownerWindowId = win?.id ?? -1
 
-    pollGitStatus(ownerWindowId, workspaceId, validRoot)
-    const interval = setInterval(() => {
-      pollGitStatus(ownerWindowId, workspaceId, validRoot)
+    // Create the entry first so pollGitStatus can reference it for AbortController
+    const entry: MonitorEntry = {
+      interval: null as unknown as ReturnType<typeof setInterval>,
+      ownerWindowId,
+      abortController: null,
+    }
+
+    pollGitStatus(ownerWindowId, workspaceId, validRoot, entry)
+    entry.interval = setInterval(() => {
+      pollGitStatus(ownerWindowId, workspaceId, validRoot, entry)
     }, POLL_INTERVAL_MS)
 
-    activeMonitors.set(workspaceId, { interval, ownerWindowId })
+    activeMonitors.set(workspaceId, entry)
   })
 
   ipcMain.on(GIT_MONITOR_STOP, (_event, workspaceId: string) => {
     const entry = activeMonitors.get(workspaceId)
     if (entry) {
       clearInterval(entry.interval)
+      entry.abortController?.abort()
       activeMonitors.delete(workspaceId)
     }
     lastState.delete(workspaceId)

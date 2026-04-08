@@ -142,7 +142,7 @@ const Card: React.FC<React.PropsWithChildren<{ className?: string; onClick?: () 
   title,
 }) => (
   <div
-    className={`rounded-md bg-surface-3 border border-subtle overflow-hidden ${
+    className={`rounded-md bg-surface-5 border border-subtle overflow-hidden ${
       onClick ? 'cursor-pointer hover:bg-hover hover:border-strong transition-all' : ''
     } ${className}`}
     onClick={onClick}
@@ -254,7 +254,7 @@ export const UsageSidebarView: React.FC = () => {
               return (
                 <Card key={tool}>
                   <div className="flex items-center gap-2 px-3 py-2 border-b border-subtle">
-                    <div className="w-6 h-6 rounded bg-surface-2 flex items-center justify-center shrink-0 text-secondary">
+                    <div className="w-6 h-6 rounded bg-surface-4 flex items-center justify-center shrink-0 text-secondary">
                       <Icon size={12} />
                     </div>
                     <span className="text-[12px] font-medium text-primary flex-1 truncate">{TOOL_LABELS[tool]}</span>

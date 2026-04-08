@@ -257,12 +257,21 @@ export default function DockTabStack({ stack, zone: zoneProp, renderPanel, getPa
           if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return
           dragStarted = true
           document.body.classList.add('canvas-interacting')
+          const stackRect = stackRef.current?.getBoundingClientRect() ?? null
+          const grabOffset = stackRect
+            ? { x: startX - stackRect.left, y: startY - stackRect.top }
+            : null
+          const sourceSize = stackRect
+            ? { width: stackRect.width, height: stackRect.height }
+            : null
           useDockDragStore.getState().startDrag(
             panelId,
             panel.type,
             panel.title,
             { type: 'dock', zone: sourceZone, stackId: stack.id },
             dockStoreApi,
+            grabOffset,
+            sourceSize,
           )
         }
 

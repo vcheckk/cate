@@ -59,11 +59,49 @@ function CanvasDropZoneInner({ canvasStoreApi }: CanvasDropZoneProps) {
   const [inCenter, setInCenter] = useState(false)
   const draggedPanelType = useDockDragStore((s) => s.draggedPanelType)
   const draggedPanelTitle = useDockDragStore((s) => s.draggedPanelTitle)
+  const dragSource = useDockDragStore((s) => s.dragSource)
+  const grabOffsetCanvas = useDockDragStore((s) => s.dragGrabOffset)
+  const dockSourceSize = useDockDragStore((s) => s.dragSourceSize)
 
-  // The default footprint of the dragged panel — used to size the ghost.
-  const defaults =
+  // Source size in canvas-space units. This is the size the new node will
+  // have when added to the target canvas.
+  let sourceSize =
     (draggedPanelType && PANEL_DEFAULT_SIZES[draggedPanelType]) ??
     { width: 600, height: 400 }
+  // Ghost is rendered in screen-space, so scale by the target canvas zoom
+  // to match what the node will actually look like once dropped.
+  const targetZoom = canvasStoreApi.getState().zoomLevel
+  // Screen-pixel offset from cursor to ghost top-left. Preference order:
+  //   1. canvas source → use grabOffset × targetZoom (canvas-space)
+  //   2. dock source → use dock rect directly in screen-pixels (no scaling)
+  //   3. fallback → center on cursor
+  let ghostPxSize: { width: number; height: number }
+  let ghostOffset: { x: number; y: number }
+  if (dragSource?.type === 'canvas') {
+    const sourceCanvas = findCanvasStoreForNode(dragSource.nodeId)
+    const srcNode = sourceCanvas?.getState().nodes[dragSource.nodeId]
+    if (srcNode) {
+      sourceSize = { width: srcNode.size.width, height: srcNode.size.height }
+    }
+    ghostPxSize = { width: sourceSize.width * targetZoom, height: sourceSize.height * targetZoom }
+    ghostOffset = grabOffsetCanvas
+      ? { x: grabOffsetCanvas.x * targetZoom, y: grabOffsetCanvas.y * targetZoom }
+      : { x: ghostPxSize.width / 2, y: ghostPxSize.height / 2 }
+  } else if (dragSource?.type === 'dock' && dockSourceSize && grabOffsetCanvas) {
+    // Preview at the canvas-default size (what the dropped node will actually
+    // be), not the source dock rect — otherwise the ghost looks huge compared
+    // to the resulting node. Rescale the grab offset proportionally so the
+    // cursor stays at the same relative spot inside the ghost.
+    ghostPxSize = { width: sourceSize.width * targetZoom, height: sourceSize.height * targetZoom }
+    ghostOffset = {
+      x: (grabOffsetCanvas.x / dockSourceSize.width) * ghostPxSize.width,
+      y: (grabOffsetCanvas.y / dockSourceSize.height) * ghostPxSize.height,
+    }
+  } else {
+    ghostPxSize = { width: sourceSize.width * targetZoom, height: sourceSize.height * targetZoom }
+    ghostOffset = { x: ghostPxSize.width / 2, y: ghostPxSize.height / 2 }
+  }
+  const defaults = ghostPxSize
 
   // Reset the module-level flag on unmount — onPointerLeave won't fire if
   // the component unmounts while hovered (e.g. when endDrag() is called).
@@ -148,17 +186,43 @@ function CanvasDropZoneInner({ canvasStoreApi }: CanvasDropZoneProps) {
         const vp = cs.viewportOffset
         const canvasX = (localX - vp.x) / zoom
         const canvasY = (localY - vp.y) / zoom
-        // Center the node on the cursor for a natural drop feel.
+        // Place the node's top-left so it matches the ghost preview. For
+        // canvas sources the grab offset is already in canvas-space. For
+        // dock sources it's in screen pixels and must be divided by zoom.
+        // The dropped node uses `sourceSize` (canvas default), but we want
+        // its top-left to match where the ghost was, which for dock is the
+        // grab offset centered on the real rect → we recenter inside the
+        // smaller canvas-default window to keep the cursor inside it.
+        let offsetX: number
+        let offsetY: number
+        if (dragSource?.type === 'canvas' && grabOffsetCanvas) {
+          offsetX = grabOffsetCanvas.x
+          offsetY = grabOffsetCanvas.y
+        } else if (dragSource?.type === 'dock' && dockSourceSize && grabOffsetCanvas) {
+          // Proportional offset inside the new (canvas-default) node so the
+          // cursor lands at the same relative position the user grabbed.
+          offsetX = (grabOffsetCanvas.x / dockSourceSize.width) * sourceSize.width
+          offsetY = (grabOffsetCanvas.y / dockSourceSize.height) * sourceSize.height
+        } else {
+          offsetX = sourceSize.width / 2
+          offsetY = sourceSize.height / 2
+        }
         const position = {
-          x: canvasX - defaults.width / 2,
-          y: canvasY - defaults.height / 2,
+          x: canvasX - offsetX,
+          y: canvasY - offsetY,
         }
         const newNodeId = canvasStoreApi
           .getState()
           .addNode(draggedPanelId, draggedPanelType, position)
-        // Bring the canvas/new node into focus and pan the viewport so the
-        // dropped node is centered — matches sidebar-create behavior.
-        canvasStoreApi.getState().focusAndCenter(newNodeId)
+        // Resize the new node to match the ghost/source size so the drop
+        // lands exactly where the preview showed it.
+        canvasStoreApi.getState().resizeNode(newNodeId, {
+          width: sourceSize.width,
+          height: sourceSize.height,
+        })
+        // Focus the new node but DON'T pan the viewport — the user explicitly
+        // dropped at this cursor position and expects it to stay there.
+        canvasStoreApi.getState().focusNode(newNodeId)
 
         useDockDragStore.getState().endDrag()
         document.body.classList.remove('canvas-interacting')
@@ -242,8 +306,8 @@ function CanvasDropZoneInner({ canvasStoreApi }: CanvasDropZoneProps) {
         <div
           style={{
             position: 'absolute',
-            left: cursor.x - defaults.width / 2,
-            top: cursor.y - defaults.height / 2,
+            left: cursor.x - ghostOffset.x,
+            top: cursor.y - ghostOffset.y,
             width: defaults.width,
             height: defaults.height,
             borderRadius: 8,

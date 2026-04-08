@@ -67,9 +67,8 @@ export default function TerminalPanel({
   const [showSearch, setShowSearch] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
 
-  const rootPath = useAppStore((state) =>
-    state.workspaces.find((w) => w.id === workspaceId)?.rootPath,
-  )
+  const workspaces = useAppStore((state) => state.workspaces)
+  const rootPath = workspaces.find((w) => w.id === workspaceId)?.rootPath
   const rootPathRef = useRef(rootPath)
   rootPathRef.current = rootPath
 
@@ -143,6 +142,50 @@ export default function TerminalPanel({
 
     let cancelled = false
 
+    function attachAndObserve(entry: import('../lib/terminalRegistry').RegistryEntry): void {
+      if (cancelled) return
+
+      // Move the xterm DOM element into the render box and fit it
+      terminalRegistry.attach(panelId, renderBox!)
+
+      // ResizeObserver — keep xterm sized to the render box
+      //    Debounced to avoid expensive fit() calls during rapid resize (e.g. node drag).
+      const resizeObserver = new ResizeObserver(() => {
+        if (fitRafRef.current !== null) cancelAnimationFrame(fitRafRef.current)
+        fitRafRef.current = requestAnimationFrame(() => {
+          fitRafRef.current = null
+          try {
+            const viewport = entry.terminal.element?.querySelector('.xterm-viewport') as HTMLElement | null
+            const wasAtBottom = viewport
+              ? Math.abs(viewport.scrollTop - (viewport.scrollHeight - viewport.clientHeight)) < 5
+              : true
+
+            terminalRegistry.fit(panelId)
+
+            if (wasAtBottom) {
+              entry.terminal.scrollToBottom()
+            }
+          } catch {
+            // Ignore fit errors during rapid resizing or zero-size frames
+          }
+        })
+      })
+      resizeObserver.observe(renderBox!)
+      resizeObserverRef.current = resizeObserver
+    }
+
+    function detachAndDisconnect(): void {
+      if (fitRafRef.current !== null) {
+        cancelAnimationFrame(fitRafRef.current)
+        fitRafRef.current = null
+      }
+      terminalRegistry.detach(panelId, renderBox!)
+      if (resizeObserverRef.current) {
+        resizeObserverRef.current.disconnect()
+        resizeObserverRef.current = null
+      }
+    }
+
     // 1. Ensure the terminal + PTY exist in the registry (no-op if already live)
     terminalRegistry
       .getOrCreate(panelId, {
@@ -152,34 +195,25 @@ export default function TerminalPanel({
       })
       .then((entry) => {
         if (cancelled) return
+        attachAndObserve(entry)
 
-        // 2. Move the xterm DOM element into the render box and fit it
-        terminalRegistry.attach(panelId, renderBox)
-
-        // 3. ResizeObserver — keep xterm sized to the render box
-        //    Debounced to avoid expensive fit() calls during rapid resize (e.g. node drag).
-        const resizeObserver = new ResizeObserver(() => {
-          if (fitRafRef.current !== null) cancelAnimationFrame(fitRafRef.current)
-          fitRafRef.current = requestAnimationFrame(() => {
-            fitRafRef.current = null
-            try {
-              const viewport = entry.terminal.element?.querySelector('.xterm-viewport') as HTMLElement | null
-              const wasAtBottom = viewport
-                ? Math.abs(viewport.scrollTop - (viewport.scrollHeight - viewport.clientHeight)) < 5
-                : true
-
-              terminalRegistry.fit(panelId)
-
-              if (wasAtBottom) {
-                entry.terminal.scrollToBottom()
+        // IntersectionObserver: detach WebGL/ResizeObserver when hidden, re-attach when visible
+        const intersectionObserver = new IntersectionObserver(
+          (entries) => {
+            if (cancelled) return
+            const isVisible = entries[0]?.isIntersecting ?? false
+            if (isVisible) {
+              if (!resizeObserverRef.current) {
+                attachAndObserve(entry)
               }
-            } catch {
-              // Ignore fit errors during rapid resizing or zero-size frames
+            } else {
+              detachAndDisconnect()
             }
-          })
-        })
-        resizeObserver.observe(renderBox)
-        resizeObserverRef.current = resizeObserver
+          },
+          { threshold: 0 },
+        )
+        intersectionObserver.observe(renderBox!)
+        ;(renderBox as any).__intersectionObserver = intersectionObserver
       })
       .catch(() => {
         // getOrCreate writes its own error message into the terminal; nothing
@@ -190,18 +224,13 @@ export default function TerminalPanel({
     return () => {
       cancelled = true
 
-      // Cancel pending fit RAF to prevent fit() on a disposed entry
-      if (fitRafRef.current !== null) {
-        cancelAnimationFrame(fitRafRef.current)
-        fitRafRef.current = null
+      const io = (renderBox as any).__intersectionObserver as IntersectionObserver | undefined
+      if (io) {
+        io.disconnect()
+        delete (renderBox as any).__intersectionObserver
       }
 
-      terminalRegistry.detach(panelId, renderBox)
-
-      if (resizeObserverRef.current) {
-        resizeObserverRef.current.disconnect()
-        resizeObserverRef.current = null
-      }
+      detachAndDisconnect()
     }
   }, [panelId, workspaceId, nodeId, initialInput])
 

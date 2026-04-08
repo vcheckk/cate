@@ -15,8 +15,51 @@ import {
   TextT,
   ArrowsOutSimple,
   DotsThree,
+  SquaresFour,
 } from '@phosphor-icons/react'
 import { useCanvasStoreApi } from '../stores/CanvasStoreContext'
+import { useShortcutStore } from '../stores/shortcutStore'
+import { ShortcutHintBadge } from '../ui/ShortcutHintBadge'
+import type { ShortcutAction, StoredShortcut } from '../../shared/types'
+
+// Format a shortcut into a badge label (modifiers other than ⌘ + key).
+// The ⌘ glyph is rendered by ShortcutHintBadge itself.
+function formatBadgeLabel(s: StoredShortcut): string {
+  let prefix = ''
+  if (s.control) prefix += '\u2303'
+  if (s.option) prefix += '\u2325'
+  if (s.shift) prefix += '\u21E7'
+  let key: string
+  switch (s.key) {
+    case '\t': key = 'Tab'; break
+    case ' ': key = 'Space'; break
+    case '=':
+    case '-':
+    case '\\': key = s.key; break
+    default: key = s.key.toUpperCase()
+  }
+  return prefix + key
+}
+
+const ToolbarHintBadge: React.FC<{ action: ShortcutAction }> = ({ action }) => {
+  const isShowingHints = useShortcutStore((s) => s.isShowingHints)
+  const active = useShortcutStore((s) => s.activeModifiers)
+  const shortcut = useShortcutStore((s) => s.shortcuts[action])
+  if (!isShowingHints || !shortcut) return null
+  if (
+    shortcut.command !== active.command ||
+    shortcut.shift !== active.shift ||
+    shortcut.option !== active.option ||
+    shortcut.control !== active.control
+  ) {
+    return null
+  }
+  return (
+    <span className="absolute left-1/2 -translate-x-1/2 -top-7 pointer-events-none whitespace-nowrap">
+      <ShortcutHintBadge label={formatBadgeLabel(shortcut)} />
+    </span>
+  )
+}
 
 interface CanvasToolbarProps {
   zoom: number
@@ -27,6 +70,7 @@ interface CanvasToolbarProps {
   onNewRegion: () => void
   onNewStickyNote: () => void
   onNewTextLabel: () => void
+  onAutoLayout: () => void
   onZoomToFit: () => void
   onZoomIn: () => void
   onZoomOut: () => void
@@ -79,6 +123,7 @@ const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
   onNewRegion,
   onNewStickyNote,
   onNewTextLabel,
+  onAutoLayout,
   onZoomToFit,
   onZoomIn,
   onZoomOut,
@@ -118,7 +163,8 @@ const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
         {/* Drop-up menu */}
         {menuOpen && (
           <div
-            className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 min-w-[200px] rounded-lg border border-subtle bg-surface-4/80 backdrop-blur-xl backdrop-saturate-150 shadow-[0_10px_30px_-10px_var(--shadow-node)] p-1"
+            data-theme="dark-warm"
+            className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 min-w-[200px] rounded-lg border border-subtle bg-surface-4/95 backdrop-blur-xl backdrop-saturate-150 shadow-[0_10px_30px_-10px_var(--shadow-node)] p-1"
           >
             <MenuItem
               onClick={pick(onNewRegion)}
@@ -137,6 +183,11 @@ const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
             />
             <div className="h-px bg-surface-5 my-1" />
             <MenuItem
+              onClick={pick(onAutoLayout)}
+              icon={<SquaresFour size={16} />}
+              label="Auto Layout"
+            />
+            <MenuItem
               onClick={pick(onZoomToFit)}
               icon={<ArrowsOutSimple size={16} />}
               label="Zoom to Fit"
@@ -147,15 +198,24 @@ const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
         <div className="rounded-full border border-strong bg-surface-6 shadow-[0_8px_24px_-6px_var(--shadow-node)]">
           <div className="flex items-center gap-1 px-3 py-1.5">
             {/* Basic panel buttons */}
-            <ToolbarButton onClick={onNewTerminal} title="Terminal" size="panel">
-              <Terminal size={14} />
-            </ToolbarButton>
-            <ToolbarButton onClick={onNewBrowser} title="Browser" size="panel">
-              <Globe size={14} />
-            </ToolbarButton>
-            <ToolbarButton onClick={onNewEditor} title="Editor" size="panel">
-              <FileText size={14} />
-            </ToolbarButton>
+            <span className="relative inline-flex">
+              <ToolbarButton onClick={onNewTerminal} title="Terminal" size="panel">
+                <Terminal size={14} />
+              </ToolbarButton>
+              <ToolbarHintBadge action="newTerminal" />
+            </span>
+            <span className="relative inline-flex">
+              <ToolbarButton onClick={onNewBrowser} title="Browser" size="panel">
+                <Globe size={14} />
+              </ToolbarButton>
+              <ToolbarHintBadge action="newBrowser" />
+            </span>
+            <span className="relative inline-flex">
+              <ToolbarButton onClick={onNewEditor} title="Editor" size="panel">
+                <FileText size={14} />
+              </ToolbarButton>
+              <ToolbarHintBadge action="newEditor" />
+            </span>
 
             {/* Divider */}
             <div className="w-px h-4 bg-surface-5 mx-0.5" />
@@ -174,21 +234,30 @@ const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
             <div className="w-px h-4 bg-surface-5 mx-0.5" />
 
             {/* Zoom controls */}
-            <ToolbarButton onClick={onZoomOut} title="Zoom Out" size="zoom">
-              <Minus size={12} />
-            </ToolbarButton>
-            <button
-              type="button"
-              onClick={() => canvasApi.getState().animateZoomTo(1.0)}
-              title="Reset zoom to 100%"
-              style={{ WebkitTapHighlightColor: 'transparent' }}
-              className="text-[10px] font-mono text-primary min-w-[38px] text-center select-none rounded-full bg-transparent hover:bg-hover-strong active:bg-hover-strong cursor-pointer px-1 py-0.5 focus:outline-none focus-visible:outline-none transition-all duration-100"
-            >
-              {zoomText}
-            </button>
-            <ToolbarButton onClick={onZoomIn} title="Zoom In" size="zoom">
-              <Plus size={12} />
-            </ToolbarButton>
+            <span className="relative inline-flex">
+              <ToolbarButton onClick={onZoomOut} title="Zoom Out" size="zoom">
+                <Minus size={12} />
+              </ToolbarButton>
+              <ToolbarHintBadge action="zoomOut" />
+            </span>
+            <span className="relative inline-flex">
+              <button
+                type="button"
+                onClick={() => canvasApi.getState().animateZoomTo(1.0)}
+                title="Reset zoom to 100%"
+                style={{ WebkitTapHighlightColor: 'transparent' }}
+                className="text-[10px] font-mono text-primary min-w-[38px] text-center select-none rounded-full bg-transparent hover:bg-hover-strong active:bg-hover-strong cursor-pointer px-1 py-0.5 focus:outline-none focus-visible:outline-none transition-all duration-100"
+              >
+                {zoomText}
+              </button>
+              <ToolbarHintBadge action="zoomReset" />
+            </span>
+            <span className="relative inline-flex">
+              <ToolbarButton onClick={onZoomIn} title="Zoom In" size="zoom">
+                <Plus size={12} />
+              </ToolbarButton>
+              <ToolbarHintBadge action="zoomIn" />
+            </span>
           </div>
         </div>
       </div>

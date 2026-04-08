@@ -1,8 +1,8 @@
 import log from './logger'
-import { app, BrowserWindow, ipcMain, dialog, shell, nativeImage, screen, webContents } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, nativeImage, screen, webContents, session } from 'electron'
 import fs from 'fs'
 import path from 'path'
-import { SHELL_SHOW_IN_FOLDER, HTTP_FETCH, WEBVIEW_SCREENSHOT, NATIVE_FILE_DRAG, CAPTURE_PAGE, DIALOG_OPEN_FOLDER, DIALOG_SAVE_FILE, DIALOG_CONFIRM_UNSAVED } from '../shared/ipc-channels'
+import { SHELL_SHOW_IN_FOLDER, HTTP_FETCH, WEBVIEW_SCREENSHOT, NATIVE_FILE_DRAG, CAPTURE_PAGE, DIALOG_OPEN_FOLDER, DIALOG_SAVE_FILE, DIALOG_CONFIRM_UNSAVED, DIALOG_CONFIRM_CLOSE_CANVAS } from '../shared/ipc-channels'
 import {
   WINDOW_CREATE, WINDOW_GET_ID, WINDOW_GET_TYPE, WINDOW_SET_TITLE,
   PANEL_TRANSFER, PANEL_RECEIVE, PANEL_TRANSFER_ACK,
@@ -13,7 +13,7 @@ import {
   CROSS_WINDOW_DRAG_START, CROSS_WINDOW_DRAG_UPDATE, CROSS_WINDOW_DRAG_DROP, CROSS_WINDOW_DRAG_CANCEL, CROSS_WINDOW_DRAG_RESOLVE,
   SESSION_FLUSH_SAVE,
 } from '../shared/ipc-channels'
-import { registerHandlers as registerTerminalHandlers, flushAllLoggers } from './ipc/terminal'
+import { registerHandlers as registerTerminalHandlers, flushAllLoggers, killAllTerminals } from './ipc/terminal'
 import { registerHandlers as registerFilesystemHandlers, stopWatchersForWindow } from './ipc/filesystem'
 import { registerHandlers as registerGitHandlers } from './ipc/git'
 import { registerHandlers as registerShellHandlers, unregisterTerminalsForWindow } from './ipc/shell'
@@ -100,7 +100,11 @@ function createWindow(params?: CateWindowParams): BrowserWindow {
         if (other.id === windowId || other.isDestroyed()) continue
         const t = getWindowType(other.id)
         if (t === 'panel' || t === 'dock') {
-          other.destroy()
+          // Use close() rather than destroy() — destroy() tears down a
+          // BrowserWindow without letting its <webview> children unload,
+          // which crashes the GPU/renderer process on quit and triggers
+          // macOS's "closed unexpectedly" dialog.
+          try { other.close() } catch { /* noop */ }
         }
       }
     })
@@ -210,6 +214,8 @@ function createDragGhostWindow(panelType: string, panelTitle: string): void {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
     },
   })
 
@@ -226,8 +232,9 @@ function createDragGhostWindow(panelType: string, panelTitle: string): void {
     projectList: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgb(255,214,10)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>',
     canvas: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgb(191,90,242)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>',
   }
+  const escapeHtml = (s: string) => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!))
   const icon = iconMap[panelType] || iconMap['editor']
-  const safeTitle = panelTitle.replace(/'/g, '&#39;').replace(/</g, '&lt;').slice(0, 30)
+  const safeTitle = escapeHtml(panelTitle.slice(0, 30))
   const html = `data:text/html;charset=utf-8,<!DOCTYPE html>
 <html><head><style>
   * { margin: 0; padding: 0; }
@@ -291,6 +298,8 @@ function registerAllHandlers(): void {
   // HTTP: Fetch from main process (no CORS)
   ipcMain.handle(HTTP_FETCH, async (_event, url: string): Promise<{ ok: boolean; status: number; text: string }> => {
     try {
+      const u = new URL(url)
+      if (!['http:', 'https:'].includes(u.protocol)) throw new Error('Only http(s) URLs allowed')
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 15000)
       const res = await fetch(url, {
@@ -341,6 +350,43 @@ function registerAllHandlers(): void {
       noLink: true,
     })
     return result.response === 0 ? 'save' : result.response === 1 ? 'discard' : 'cancel'
+  })
+
+  // Confirm close of a canvas panel. When the workspace has other canvases and
+  // the closing canvas contains panels, the user is offered three choices:
+  // move the panels to another canvas, delete them, or cancel. When it's the
+  // last canvas (or empty) a simple close/cancel prompt is shown.
+  ipcMain.handle(DIALOG_CONFIRM_CLOSE_CANVAS, async (event, payload: { panelCount: number; isLast: boolean }) => {
+    const win = BrowserWindow.fromWebContents(event.sender) ?? undefined
+    const { panelCount, isLast } = payload ?? { panelCount: 0, isLast: true }
+
+    // Simple close prompt: last canvas, or an empty canvas on a multi-canvas workspace.
+    if (isLast || panelCount === 0) {
+      const result = await dialog.showMessageBox(win!, {
+        type: 'warning',
+        message: 'Close this canvas?',
+        detail: isLast
+          ? 'This is the only canvas in the workspace.'
+          : 'This canvas has no open panels.',
+        buttons: ['Close', 'Cancel'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+      })
+      return result.response === 0 ? 'close' : 'cancel'
+    }
+
+    // Multi-canvas workspace with contained panels: offer move / delete / cancel.
+    const result = await dialog.showMessageBox(win!, {
+      type: 'warning',
+      message: 'Close this canvas?',
+      detail: `This canvas contains ${panelCount} open ${panelCount === 1 ? 'panel' : 'panels'}. What would you like to do with them?`,
+      buttons: ['Move to Another Canvas', 'Delete All Panels', 'Cancel'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    })
+    return result.response === 0 ? 'move' : result.response === 1 ? 'delete' : 'cancel'
   })
 
   // Capture page screenshot for panel previews
@@ -781,6 +827,16 @@ loadSettingsSyncFromDisk()
 // importing this file (which would create a circular dependency).
 setNewMainWindowFn(() => createWindow({ type: 'main' }))
 
+// Swallow stray errors during teardown so they don't surface as a
+// "Cate quit unexpectedly" crash dialog on macOS. Real problems are
+// still captured in the log.
+process.on('uncaughtException', (err) => {
+  log.error('uncaughtException: %O', err)
+})
+process.on('unhandledRejection', (reason) => {
+  log.error('unhandledRejection: %O', reason)
+})
+
 app.whenReady().then(async () => {
   log.info('App ready, resolving shell environment...')
 
@@ -792,6 +848,22 @@ app.whenReady().then(async () => {
   // Register the user's home directory as an allowed root so workspace paths
   // under ~ are accessible. The Desktop is also allowed for screenshot saves.
   addAllowedRoot(app.getPath('home'))
+
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const origin = details.url
+    if (origin.startsWith('file://') || (process.env.ELECTRON_RENDERER_URL && origin.startsWith(process.env.ELECTRON_RENDERER_URL))) {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          'Content-Security-Policy': [
+            `default-src 'self'; script-src 'self'${process.env.ELECTRON_RENDERER_URL ? " 'unsafe-inline' 'unsafe-eval'" : ''}; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https: ws: wss:; font-src 'self' data:; object-src 'none'; base-uri 'self'`,
+          ],
+        },
+      })
+    } else {
+      callback({})
+    }
+  })
 
   registerAllHandlers()
   log.info('IPC handlers registered')
@@ -816,6 +888,10 @@ app.on('activate', () => {
 app.on('before-quit', () => {
   log.info('Before quit, flushing loggers and requesting session save')
   flushAllLoggers()
+  // Kill all PTYs now, while the JS environment is still alive. If we let
+  // them die during Environment::CleanupHandles, node-pty's ThreadSafeFunction
+  // exit callback throws into a torn-down context and SIGABRTs the process.
+  killAllTerminals()
   // Ask the main window renderer to save immediately (cancels debounce)
   const allWindows = BrowserWindow.getAllWindows()
   const mainWin = allWindows.find((w) => !w.isDestroyed() && getWindowType(w.id) === 'main')
@@ -830,4 +906,8 @@ app.on('will-quit', () => {
   // we at least write the most recent successfully-saved state.
   log.info('will-quit: sync session save fallback')
   saveSessionSync(getLastSavedSession())
+  // Force immediate exit to avoid node-pty's ThreadSafeFunction firing into
+  // a torn-down JS environment during node::Environment::CleanupHandles,
+  // which aborts the process with SIGABRT (Napi::Error::ThrowAsJavaScriptException).
+  process.exit(0)
 })

@@ -5,6 +5,7 @@
 
 import { ipcMain } from 'electron'
 import { spawn, type ChildProcess } from 'child_process'
+import path from 'path'
 import log from '../logger'
 import {
   MCP_SPAWN,
@@ -14,6 +15,38 @@ import {
 } from '../../shared/ipc-channels'
 import { sendToWindow, windowFromEvent } from '../windowRegistry'
 import { getShellEnv } from '../shellEnv'
+
+// Allowed command basenames for MCP server processes
+const ALLOWED_COMMANDS = new Set(['node', 'python', 'python3', 'ruby', 'deno', 'bun', 'npx', 'uvx'])
+
+// Regex detecting shell metacharacters or path traversal
+const UNSAFE_COMMAND_RE = /[;&|`$<>(){}[\]\\'"\s]|\.\./
+
+function validateCommand(command: string): void {
+  const basename = path.basename(command)
+  if (UNSAFE_COMMAND_RE.test(command)) {
+    throw new Error(`MCP_SPAWN rejected: command contains unsafe characters: ${command}`)
+  }
+  if (!ALLOWED_COMMANDS.has(basename)) {
+    throw new Error(
+      `MCP_SPAWN rejected: command "${basename}" is not in the allowed list (${[...ALLOWED_COMMANDS].join(', ')})`,
+    )
+  }
+}
+
+// Prefixes and exact keys to strip from renderer-supplied env
+const DANGEROUS_ENV_PREFIXES = ['LD_', 'DYLD_']
+const DANGEROUS_ENV_KEYS = new Set(['NODE_OPTIONS', 'PYTHONSTARTUP', 'PYTHONPATH'])
+
+function filterRendererEnv(env: Record<string, string>): Record<string, string> {
+  const filtered: Record<string, string> = {}
+  for (const [key, value] of Object.entries(env)) {
+    if (DANGEROUS_ENV_KEYS.has(key)) continue
+    if (DANGEROUS_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) continue
+    filtered[key] = value
+  }
+  return filtered
+}
 
 // Map from server name to its running child process + owning window
 const runningServers: Map<string, { process: ChildProcess; ownerWindowId: number }> = new Map()
@@ -47,8 +80,9 @@ export function registerHandlers(): void {
 
       let child: ChildProcess
       try {
+        validateCommand(command)
         child = spawn(command, args, {
-          env: { ...getShellEnv(), ...env },
+          env: { ...getShellEnv(), ...filterRendererEnv(env) },
           stdio: ['pipe', 'pipe', 'pipe'],
         })
       } catch (err) {
@@ -94,11 +128,18 @@ export function registerHandlers(): void {
       args: string[],
       env: Record<string, string>,
     ): Promise<{ success: boolean; error?: string }> => {
+      try {
+        validateCommand(command)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        return { success: false, error: message }
+      }
+
       return new Promise((resolve) => {
         let settled = false
 
         const child = spawn(command, args, {
-          env: { ...getShellEnv(), ...env },
+          env: { ...getShellEnv(), ...filterRendererEnv(env) },
           stdio: ['pipe', 'pipe', 'pipe'],
         })
 

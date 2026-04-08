@@ -93,8 +93,11 @@ function removeFromSource(
     if (sourceStore) {
       try {
         sourceStore.getState().undockPanel(panelId)
-      } catch {
-        /* best-effort — fall through to node removal */
+      } catch (err) {
+        // Surface undock failures so we don't silently leave a dangling panel
+        // in the source dock when the canvas node is removed below.
+        // eslint-disable-next-line no-console
+        console.warn('[dropExecution] undockPanel failed for', panelId, err)
       }
     }
     canvasStoreApi.getState().finalizeRemoveNode(source.nodeId)

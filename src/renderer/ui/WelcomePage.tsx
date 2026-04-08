@@ -134,7 +134,7 @@ export default function WelcomePage({ workspaceId }: { workspaceId: string }) {
                         size={14}
                         className="text-muted group-hover:text-secondary flex-shrink-0"
                       />
-                      <span className="text-sm text-blue-400 group-hover:text-blue-300 truncate">
+                      <span className="text-sm text-focus-blue group-hover:text-focus-blue truncate">
                         {name}
                       </span>
                       <span className="text-xs text-muted truncate">
@@ -184,7 +184,7 @@ function ActionItem({
       onClick={onClick}
     >
       <span className="text-muted group-hover:text-secondary">{icon}</span>
-      <span className="text-sm text-blue-400 group-hover:text-blue-300">
+      <span className="text-sm text-focus-blue group-hover:text-focus-blue">
         {label}
       </span>
       {shortcut && (

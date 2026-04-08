@@ -434,6 +434,7 @@ export type ShortcutAction =
   | 'focusPrevious'
   | 'saveFile'
   | 'zoomToFit'
+  | 'autoLayout'
   | 'globalSearch'
   | 'undo'
   | 'redo'
@@ -462,6 +463,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   'focusPrevious',
   'saveFile',
   'zoomToFit',
+  'autoLayout',
   'globalSearch',
   'undo',
   'redo',
@@ -486,6 +488,7 @@ export const SHORTCUT_DISPLAY_NAMES: Record<ShortcutAction, string> = {
   focusPrevious: 'Focus Previous Panel',
   saveFile: 'Save File',
   zoomToFit: 'Zoom to Fit',
+  autoLayout: 'Auto Layout Canvas',
   globalSearch: 'Global Search',
   undo: 'Undo',
   redo: 'Redo',
@@ -510,6 +513,7 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutAction, StoredShortcut> = {
   focusPrevious: storedShortcut('\t', { shift: true, control: true }),
   saveFile: storedShortcut('s', { command: true }),
   zoomToFit: storedShortcut('1', { command: true }),
+  autoLayout: storedShortcut('l', { command: true, shift: true }),
   globalSearch: storedShortcut('h', { command: true, shift: true }),
   undo: storedShortcut('z', { command: true }),
   redo: storedShortcut('z', { command: true, shift: true }),

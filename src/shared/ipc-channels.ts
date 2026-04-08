@@ -93,6 +93,7 @@ export const MENU_SHOW_CONTEXT = 'menu:showContext'
 export const DIALOG_OPEN_FOLDER = 'dialog:openFolder'
 export const DIALOG_SAVE_FILE = 'dialog:saveFile'
 export const DIALOG_CONFIRM_UNSAVED = 'dialog:confirmUnsaved'
+export const DIALOG_CONFIRM_CLOSE_CANVAS = 'dialog:confirmCloseCanvas'
 
 // Recent Projects
 export const RECENT_PROJECTS_GET = 'recent-projects:get'

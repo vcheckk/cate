@@ -40,6 +40,15 @@ export interface DockDragState {
    *  handlers know to skip their own executeDrop path. Reset on every
    *  startDrag and endDrag. */
   canvasDropConsumed: boolean
+  /** Offset from the cursor to the top-left of the source panel's on-screen
+   *  rect at drag start, in screen pixels. Used by CanvasDropZone to render
+   *  the ghost 1:1 over where the user grabbed the window, instead of
+   *  centering it on the cursor. Null when unknown. */
+  dragGrabOffset: Point | null
+  /** Source panel's on-screen size at drag start, in screen pixels. Used by
+   *  CanvasDropZone to render the ghost 1:1 with the real window. Null when
+   *  unknown (e.g. canvas-source drags provide size via canvas node). */
+  dragSourceSize: { width: number; height: number } | null
 }
 
 interface DockDragActions {
@@ -50,6 +59,8 @@ interface DockDragActions {
     panelTitle: string,
     source: DragSource,
     sourceDockStoreApi?: StoreApi<DockStore> | null,
+    grabOffset?: Point | null,
+    sourceSize?: { width: number; height: number } | null,
   ) => void
   /** Update cursor position during drag */
   updateCursor: (position: Point) => void
@@ -76,8 +87,10 @@ export const useDockDragStore = create<DockDragState & DockDragActions>((set) =>
   cursorPosition: null,
   activeDropTarget: null,
   canvasDropConsumed: false,
+  dragGrabOffset: null,
+  dragSourceSize: null,
 
-  startDrag(panelId, panelType, panelTitle, source, sourceDockStoreApi = null) {
+  startDrag(panelId, panelType, panelTitle, source, sourceDockStoreApi = null, grabOffset = null, sourceSize = null) {
     set({
       isDragging: true,
       draggedPanelId: panelId,
@@ -88,6 +101,8 @@ export const useDockDragStore = create<DockDragState & DockDragActions>((set) =>
       cursorPosition: null,
       activeDropTarget: null,
       canvasDropConsumed: false,
+      dragGrabOffset: grabOffset,
+      dragSourceSize: sourceSize,
     })
   },
 
@@ -114,6 +129,8 @@ export const useDockDragStore = create<DockDragState & DockDragActions>((set) =>
       cursorPosition: null,
       activeDropTarget: null,
       canvasDropConsumed: false,
+      dragGrabOffset: null,
+      dragSourceSize: null,
     })
   },
 }))

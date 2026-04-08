@@ -2,7 +2,7 @@
 // Minimap — Bird's-eye overview of all panels on the canvas.
 // =============================================================================
 
-import React, { useCallback, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useCanvasStoreContext, useCanvasStoreApi, shallow } from '../stores/CanvasStoreContext'
 import { useWorkspacePanels } from '../stores/appStore'
 
@@ -45,7 +45,9 @@ function panelColor(panelType: string): string {
 const Minimap: React.FC = () => {
   const nodeList = useCanvasStoreContext((s) => Object.values(s.nodes), shallow)
   const regionList = useCanvasStoreContext((s) => Object.values(s.regions), shallow)
-  const viewportOffset = useCanvasStoreContext((s) => s.viewportOffset)
+  // NOTE: viewportOffset is intentionally NOT subscribed via React here.
+  // The viewport rect div is updated imperatively via canvasApi.subscribe
+  // so panning never triggers a Minimap re-render.
   const zoomLevel = useCanvasStoreContext((s) => s.zoomLevel)
   const containerSize = useCanvasStoreContext(
     (s) => s.containerSize,
@@ -54,6 +56,14 @@ const Minimap: React.FC = () => {
   const panels = useWorkspacePanels()
   const canvasApi = useCanvasStoreApi()
   const minimapRef = useRef<HTMLDivElement>(null)
+  // Ref to the viewport indicator div — updated imperatively on pan
+  const viewportRectRef = useRef<HTMLDivElement>(null)
+  // Stable ref for minimap layout params so the subscription callback always
+  // reads fresh values without needing to re-subscribe.
+  const layoutRef = useRef({
+    worldMinX: 0, worldMinY: 0, scale: 1,
+    zoomLevel: 1, containerWidth: 0, containerHeight: 0,
+  })
   const [corner, setCorner] = useState<Corner>(loadCorner)
   const [size, setSize] = useState<{ w: number; h: number }>(loadSize)
   const MINIMAP_WIDTH = size.w
@@ -163,6 +173,23 @@ const Minimap: React.FC = () => {
     window.addEventListener('mouseup', handleUp)
   }, [navigateToPoint])
 
+  // Imperatively update the viewport rect on pan — no React re-render needed.
+  useEffect(() => {
+    const unsubscribe = canvasApi.subscribe((state, prev) => {
+      if (state.viewportOffset === prev.viewportOffset) return
+      const el = viewportRectRef.current
+      if (!el) return
+      const { worldMinX, worldMinY, scale, zoomLevel, containerWidth, containerHeight } = layoutRef.current
+      const vpL = -state.viewportOffset.x / zoomLevel
+      const vpT = -state.viewportOffset.y / zoomLevel
+      el.style.left = `${MINIMAP_PADDING + (vpL - worldMinX) * scale}px`
+      el.style.top = `${MINIMAP_PADDING + (vpT - worldMinY) * scale}px`
+      el.style.width = `${(containerWidth / zoomLevel) * scale}px`
+      el.style.height = `${(containerHeight / zoomLevel) * scale}px`
+    })
+    return unsubscribe
+  }, [canvasApi])
+
   const contentBounds = useMemo(() => {
     if (nodeList.length === 0) return null
     const minX = Math.min(
@@ -188,16 +215,17 @@ const Minimap: React.FC = () => {
 
   const { minX, minY, maxX, maxY } = contentBounds
 
-  // Add padding and include viewport bounds
-  const vpLeft = -viewportOffset.x / zoomLevel
-  const vpTop = -viewportOffset.y / zoomLevel
-  const vpRight = vpLeft + containerSize.width / zoomLevel
-  const vpBottom = vpTop + containerSize.height / zoomLevel
+  // Seed world bounds from current offset (used for initial render and re-renders on zoom/node change)
+  const seedOffset = canvasApi.getState().viewportOffset
+  const vpLeft0 = -seedOffset.x / zoomLevel
+  const vpTop0 = -seedOffset.y / zoomLevel
+  const vpRight0 = vpLeft0 + containerSize.width / zoomLevel
+  const vpBottom0 = vpTop0 + containerSize.height / zoomLevel
 
-  const worldMinX = Math.min(minX, vpLeft) - 100
-  const worldMinY = Math.min(minY, vpTop) - 100
-  const worldMaxX = Math.max(maxX, vpRight) + 100
-  const worldMaxY = Math.max(maxY, vpBottom) + 100
+  const worldMinX = Math.min(minX, vpLeft0) - 100
+  const worldMinY = Math.min(minY, vpTop0) - 100
+  const worldMaxX = Math.max(maxX, vpRight0) + 100
+  const worldMaxY = Math.max(maxY, vpBottom0) + 100
 
   const worldW = worldMaxX - worldMinX
   const worldH = worldMaxY - worldMinY
@@ -209,6 +237,22 @@ const Minimap: React.FC = () => {
 
   const toMiniX = (x: number) => MINIMAP_PADDING + (x - worldMinX) * scale
   const toMiniY = (y: number) => MINIMAP_PADDING + (y - worldMinY) * scale
+
+  // Initial viewport rect position (for render)
+  const vpRectLeft = toMiniX(vpLeft0)
+  const vpRectTop = toMiniY(vpTop0)
+  const vpRectWidth = (containerSize.width / zoomLevel) * scale
+  const vpRectHeight = (containerSize.height / zoomLevel) * scale
+
+  // Keep layoutRef up to date so the imperative subscription always has fresh values
+  layoutRef.current = {
+    worldMinX,
+    worldMinY,
+    scale,
+    zoomLevel,
+    containerWidth: containerSize.width,
+    containerHeight: containerSize.height,
+  }
 
   return (
     <div
@@ -305,14 +349,15 @@ const Minimap: React.FC = () => {
         )
       })}
 
-      {/* Viewport rectangle */}
+      {/* Viewport rectangle — position is updated imperatively by canvasApi.subscribe */}
       <div
+        ref={viewportRectRef}
         style={{
           position: 'absolute',
-          left: toMiniX(vpLeft),
-          top: toMiniY(vpTop),
-          width: (containerSize.width / zoomLevel) * scale,
-          height: (containerSize.height / zoomLevel) * scale,
+          left: vpRectLeft,
+          top: vpRectTop,
+          width: vpRectWidth,
+          height: vpRectHeight,
           border: `1.5px solid var(--border-strong)`,
           borderRadius: 2,
           pointerEvents: 'none',

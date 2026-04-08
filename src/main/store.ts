@@ -25,7 +25,53 @@ import {
   LAYOUT_DELETE,
 } from '../shared/ipc-channels'
 import { DEFAULT_SETTINGS } from '../shared/types'
-import type { AppSettings, SessionSnapshot } from '../shared/types'
+import type { AppSettings, SessionSnapshot, MultiWorkspaceSession } from '../shared/types'
+
+// ---------------------------------------------------------------------------
+// Settings schema: expected key → expected typeof value (or 'array')
+// ---------------------------------------------------------------------------
+const SETTINGS_SCHEMA: Record<keyof AppSettings, string> = {
+  restoreSessionOnLaunch: 'boolean',
+  defaultShellPath: 'string',
+  warnBeforeQuit: 'boolean',
+  nativeTabs: 'boolean',
+  appearanceMode: 'string',
+  editorFontSize: 'number',
+  gridStyle: 'string',
+  snapToGridEnabled: 'boolean',
+  gridSpacing: 'number',
+  showMinimap: 'boolean',
+  defaultPanelWidth: 'number',
+  defaultPanelHeight: 'number',
+  zoomSpeed: 'number',
+  autoFocusLargestVisibleNode: 'boolean',
+  terminalFontFamily: 'string',
+  terminalFontSize: 'number',
+  terminalScrollback: 'number',
+  browserHomepage: 'string',
+  browserSearchEngine: 'string',
+  sidebarTintOpacity: 'number',
+  showFileExplorerOnLaunch: 'boolean',
+  notificationsEnabled: 'boolean',
+  notificationMode: 'string',
+  notifyOnTerminalHalt: 'boolean',
+  notifyOnlyWhenUnfocused: 'boolean',
+}
+
+/** Safely merge only known, type-correct keys from a parsed object into the settings cache. */
+function mergeValidatedSettings(target: Partial<AppSettings>, source: Record<string, unknown>): void {
+  for (const key of Object.keys(SETTINGS_SCHEMA) as Array<keyof AppSettings>) {
+    if (!(key in source)) continue
+    const val = source[key]
+    const expected = SETTINGS_SCHEMA[key]
+    if (expected === 'array') {
+      if (!Array.isArray(val)) { log.warn('Settings schema mismatch: %s expected array, got %s', key, typeof val); continue }
+    } else {
+      if (typeof val !== expected) { log.warn('Settings schema mismatch: %s expected %s, got %s', key, expected, typeof val); continue }
+    }
+    ;(target as Record<string, unknown>)[key as string] = val
+  }
+}
 
 // Lazy-loaded store instance (ESM dynamic import)
 let storeInstance: any = null
@@ -56,8 +102,8 @@ export function loadSettingsSyncFromDisk(): void {
     if (!fsSync.existsSync(cfgPath)) return
     const raw = fsSync.readFileSync(cfgPath, 'utf-8')
     const parsed = JSON.parse(raw)
-    if (parsed && typeof parsed === 'object') {
-      Object.assign(settingsCache, parsed)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      mergeValidatedSettings(settingsCache, parsed as Record<string, unknown>)
     }
   } catch (err) {
     log.warn('Sync settings load failed: %O', err)
@@ -100,6 +146,12 @@ async function atomicWriteSession(sessionPath: string, json: string): Promise<vo
 
   await fs.mkdir(dir, { recursive: true })
   await fs.writeFile(tmpPath, json, 'utf-8')
+  // Guard against silent write failures clobbering a good session.
+  const tmpStat = await fs.stat(tmpPath)
+  if (tmpStat.size === 0) {
+    await fs.unlink(tmpPath).catch(() => {})
+    throw new Error('tmp session file is empty after write')
+  }
   await fs.rename(sessionPath, bakPath).catch(() => {}) // OK if no previous file
   await fs.rename(tmpPath, sessionPath)
 }
@@ -115,10 +167,18 @@ export function saveSessionSync(json: string | null): void {
   try {
     fsSync.mkdirSync(dir, { recursive: true })
     fsSync.writeFileSync(tmpPath, json, 'utf-8')
+    // Verify the tmp file was actually written before clobbering the previous
+    // session — a zero-byte tmp from a silent write failure must not destroy
+    // the existing good session.
+    const tmpStat = fsSync.statSync(tmpPath)
+    if (tmpStat.size === 0) {
+      throw new Error('tmp session file is empty after write')
+    }
     try { fsSync.renameSync(sessionPath, bakPath) } catch { /* OK */ }
     fsSync.renameSync(tmpPath, sessionPath)
   } catch (err) {
     log.warn('Sync session save failed: %O', err)
+    try { fsSync.unlinkSync(tmpPath) } catch { /* noop */ }
   }
 }
 
@@ -129,8 +189,25 @@ function isValidSession(data: unknown): boolean {
   if (!data || typeof data !== 'object') return false
   const obj = data as Record<string, unknown>
   if (obj.version === 2 && Array.isArray(obj.workspaces)) return true
-  if (Array.isArray(obj.nodes)) return true // legacy format
   return false
+}
+
+// ---------------------------------------------------------------------------
+// Session pruning — removes stale dockPanels entries to bound session size
+// ---------------------------------------------------------------------------
+function pruneSession(session: MultiWorkspaceSession): MultiWorkspaceSession {
+  return {
+    ...session,
+    workspaces: session.workspaces.map((ws) => {
+      if (!ws.dockPanels || !ws.dockState?.locations) return ws
+      const knownKeys = new Set(Object.keys(ws.dockState.locations))
+      const prunedPanels: typeof ws.dockPanels = {}
+      for (const [k, v] of Object.entries(ws.dockPanels)) {
+        if (knownKeys.has(k)) prunedPanels[k] = v
+      }
+      return { ...ws, dockPanels: prunedPanels }
+    }),
+  }
 }
 
 /** Try to read and parse a session file, returning null on any failure */
@@ -177,8 +254,10 @@ export function registerHandlers(): void {
   })
 
   // Session persistence (atomic writes with backup rotation)
-  ipcMain.handle(SESSION_SAVE, async (_event, snapshot: SessionSnapshot) => {
-    const json = JSON.stringify(snapshot, null, 2)
+  ipcMain.handle(SESSION_SAVE, async (_event, snapshot: MultiWorkspaceSession) => {
+    // Prune stale dockPanels entries before serialising to bound session size
+    const pruned = isValidSession(snapshot) ? pruneSession(snapshot) : snapshot
+    const json = JSON.stringify(pruned, null, 2)
     lastSavedSessionJson = json
     await serialized(async () => {
       const sessionPath = getSessionPath()
@@ -225,7 +304,9 @@ export function registerHandlers(): void {
   })
 
   // App paths
+  const ALLOWED_PATHS = new Set(['home', 'appData', 'userData', 'temp', 'desktop', 'documents', 'downloads'])
   ipcMain.handle(APP_GET_PATH, async (_event, name: string) => {
+    if (!ALLOWED_PATHS.has(name)) throw new Error(`Path '${name}' not allowed`)
     return app.getPath(name as Parameters<typeof app.getPath>[0])
   })
 

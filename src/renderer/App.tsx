@@ -51,6 +51,7 @@ import { terminalRegistry } from './lib/terminalRegistry'
 import { applyTheme } from './lib/themeManager'
 import { useUsageStore } from './stores/usageStore'
 import { confirmCloseDirtyPanels } from './lib/confirmCloseDirty'
+import { confirmCloseCanvas } from './lib/confirmCloseCanvas'
 import pkg from '../../package.json'
 
 // -----------------------------------------------------------------------------
@@ -321,7 +322,16 @@ function MainApp() {
   const handleDockClosePanel = useCallback(
     async (panelId: string) => {
       const ws = useAppStore.getState().workspaces.find((w) => w.id === selectedWorkspaceId)
-      const ok = await confirmCloseDirtyPanels([ws?.panels[panelId]])
+      const panel = ws?.panels[panelId]
+      // Canvas panels get their own confirmation flow (move/delete/cancel),
+      // because they may contain many child panels the user cares about.
+      if (panel?.type === 'canvas') {
+        const proceed = await confirmCloseCanvas(selectedWorkspaceId, panelId)
+        if (!proceed) return
+        useAppStore.getState().closePanel(selectedWorkspaceId, panelId)
+        return
+      }
+      const ok = await confirmCloseDirtyPanels([panel])
       if (!ok) return
       useAppStore.getState().closePanel(selectedWorkspaceId, panelId)
     },

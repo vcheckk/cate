@@ -253,6 +253,11 @@ export interface ElectronAPI {
   /** Native unsaved-changes confirmation. Returns 'save' | 'discard' | 'cancel'. */
   confirmUnsavedChanges(payload: { fileName?: string; multiple?: boolean }): Promise<'save' | 'discard' | 'cancel'>
 
+  /** Native confirmation shown when closing a canvas panel. When the canvas is
+   *  not the last and has open panels, returns 'move' | 'delete' | 'cancel'.
+   *  Otherwise returns 'close' | 'cancel'. */
+  confirmCloseCanvas(payload: { panelCount: number; isLast: boolean }): Promise<'move' | 'delete' | 'close' | 'cancel'>
+
   // ---------------------------------------------------------------------------
   // Recent Projects
   // ---------------------------------------------------------------------------

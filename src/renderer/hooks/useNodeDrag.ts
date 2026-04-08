@@ -28,6 +28,10 @@ interface DragState {
   initialClientX: number  // for dead zone
   initialClientY: number  // for dead zone
   initialOrigin: Point
+  /** Cached DOM element for the dragged node — mutated directly during drag */
+  nodeEl: HTMLElement | null
+  /** Cached DOM elements for co-selected nodes during multi-drag */
+  selectedEls: Map<string, HTMLElement>
 }
 
 interface UseNodeDragReturn {
@@ -97,6 +101,12 @@ export function useNodeDrag(nodeId: string, zoomLevel: number, canvasStoreApi: S
   const crossWindowRef = useRef<{ snapshot: PanelTransferSnapshot; panelId: string; nodeId: string } | null>(null)
   // Spatial index for snap-guide neighbor lookup (rebuilt at drag start)
   const snapIndexRef = useRef<SnapIndex | null>(null)
+  // Last position applied to the DOM during drag — committed to store on mouseup
+  const lastDomOrigin = useRef<Point | null>(null)
+  // Last DOM positions for all selected nodes during multi-drag
+  const lastDomOrigins = useRef<Map<string, Point>>(new Map())
+  // Last positions for selected regions during multi-drag (regions have no DOM element)
+  const lastRegionOrigins = useRef<Map<string, Point>>(new Map())
 
   // Shared cleanup logic — used by mouseup, blur handler, and unmount
   const cancelDrag = useCallback((revert?: boolean) => {
@@ -130,13 +140,43 @@ export function useNodeDrag(nodeId: string, zoomLevel: number, canvasStoreApi: S
     if (revert) {
       const ds = dragStateRef.current
       if (ds) {
+        // Restore DOM positions for reverted drag
+        if (ds.nodeEl) {
+          ds.nodeEl.style.left = `${ds.initialOrigin.x}px`
+          ds.nodeEl.style.top = `${ds.initialOrigin.y}px`
+        }
         canvasStoreApi.getState().moveNode(nodeId, ds.initialOrigin)
       }
-    } else if (pendingOrigin.current) {
-      canvasStoreApi.getState().moveNode(nodeId, pendingOrigin.current)
+    } else {
+      // Flush any remaining pending origin first
+      if (pendingOrigin.current) {
+        canvasStoreApi.getState().moveNode(nodeId, pendingOrigin.current)
+      } else if (lastDomOrigin.current) {
+        // Commit the last DOM position to the store
+        canvasStoreApi.getState().moveNode(nodeId, lastDomOrigin.current)
+      }
+      // Commit multi-drag positions (nodes + regions) in one batch
+      if (lastDomOrigins.current.size > 0 || lastRegionOrigins.current.size > 0) {
+        canvasStoreApi.setState((s) => {
+          const updatedNodes = { ...s.nodes }
+          for (const [id, origin] of lastDomOrigins.current) {
+            const n = s.nodes[id]
+            if (n) updatedNodes[id] = { ...n, origin }
+          }
+          const updatedRegions = { ...s.regions }
+          for (const [id, origin] of lastRegionOrigins.current) {
+            const r = s.regions[id]
+            if (r) updatedRegions[id] = { ...r, origin }
+          }
+          return { nodes: updatedNodes, regions: updatedRegions }
+        })
+      }
     }
 
     pendingOrigin.current = null
+    lastDomOrigin.current = null
+    lastDomOrigins.current.clear()
+    lastRegionOrigins.current.clear()
     snapIndexRef.current = null
     canvasStoreApi.getState().clearSnapGuides()
     if (canvasStoreApi.getState().dropTargetRegionId !== null) {
@@ -145,9 +185,12 @@ export function useNodeDrag(nodeId: string, zoomLevel: number, canvasStoreApi: S
     dragStateRef.current = null
   }, [nodeId, canvasStoreApi])
 
-  // Cleanup on unmount
+  // Cleanup on unmount — commit the last in-flight position rather than
+  // reverting. If the node is unmounted mid-drag (e.g. viewport culling
+  // kicks in after a store update), reverting to initialOrigin looks like
+  // a snap-back to the user.
   useEffect(() => {
-    return () => cancelDrag(true)
+    return () => cancelDrag(false)
   }, [cancelDrag])
 
   const handleDragStart = useCallback(
@@ -169,17 +212,30 @@ export function useNodeDrag(nodeId: string, zoomLevel: number, canvasStoreApi: S
         preState.clearSelection()
       }
 
+      // Cache DOM elements for imperative position mutation during drag
+      const nodeEl = document.querySelector<HTMLElement>(`[data-node-id="${nodeId}"]`)
+      const selectedEls = new Map<string, HTMLElement>()
+      for (const id of preState.selectedNodeIds) {
+        const el = document.querySelector<HTMLElement>(`[data-node-id="${id}"]`)
+        if (el) selectedEls.set(id, el)
+      }
+
       dragStateRef.current = {
         lastClientX: e.clientX,
         lastClientY: e.clientY,
         initialClientX: e.clientX,
         initialClientY: e.clientY,
         initialOrigin: { ...node.origin },
+        nodeEl,
+        selectedEls,
       }
       isDraggingRef.current = true
       dragStartedRef.current = false
       wasDraggedRef.current = false
       inDockDragRef.current = false
+      lastDomOrigin.current = null
+      lastDomOrigins.current.clear()
+      lastRegionOrigins.current.clear()
 
       // Build spatial index for snap guides
       {
@@ -251,11 +307,29 @@ export function useNodeDrag(nodeId: string, zoomLevel: number, canvasStoreApi: S
             const wsId = useAppStore.getState().selectedWorkspaceId
             const ws = useAppStore.getState().workspaces.find(w => w.id === wsId)
             const panel = ws?.panels[draggedPanelId]
+            // Grab offset: where the cursor sits inside the source node's
+            // on-screen rect. Lets CanvasDropZone render the ghost 1:1 over
+            // the window instead of centering it on the cursor.
+            const nodeEl = document.querySelector(
+              `[data-node-id="${nodeId}"]`,
+            ) as HTMLElement | null
+            const nodeRect = nodeEl?.getBoundingClientRect()
+            // Normalize to canvas-space (divide by source zoom) so ghost
+            // sizing stays correct if the target canvas has a different zoom.
+            const srcZoom = canvasStoreApi.getState().zoomLevel || 1
+            const grabOffset = nodeRect
+              ? {
+                  x: (ev.clientX - nodeRect.left) / srcZoom,
+                  y: (ev.clientY - nodeRect.top) / srcZoom,
+                }
+              : null
             useDockDragStore.getState().startDrag(
               draggedPanelId,
               panel?.type ?? 'terminal',
               panel?.title ?? 'Panel',
               { type: 'canvas', nodeId },
+              null,
+              grabOffset,
             )
           }
         }
@@ -315,8 +389,12 @@ export function useNodeDrag(nodeId: string, zoomLevel: number, canvasStoreApi: S
         ds.lastClientX = ev.clientX
         ds.lastClientY = ev.clientY
 
-        // Accumulate position — don't update store directly
-        const prev = pendingOrigin.current || currentNode.origin
+        // Accumulate position — don't update store directly.
+        // Fall back chain: in-flight pending → last committed DOM origin →
+        // live store origin. Reading store.origin here would be wrong once
+        // the first RAF has fired, because the store isn't updated during
+        // drag — only lastDomOrigin tracks the true current position.
+        const prev = pendingOrigin.current || lastDomOrigin.current || currentNode.origin
         pendingOrigin.current = {
           x: prev.x + deltaX,
           y: prev.y + deltaY,
@@ -345,53 +423,67 @@ export function useNodeDrag(nodeId: string, zoomLevel: number, canvasStoreApi: S
               const dx = origin.x - currentNode.origin.x
               const dy = origin.y - currentNode.origin.y
 
-              // Batch all node + region moves into a single store update
-              canvasStoreApi.setState((s) => {
-                const updatedNodes = { ...s.nodes }
-                for (const id of currentState.selectedNodeIds) {
-                  const n = s.nodes[id]
-                  if (n) updatedNodes[id] = { ...n, origin: { x: n.origin.x + dx, y: n.origin.y + dy } }
+              // Mutate DOM directly for each selected node — no store update during drag
+              const ds = dragStateRef.current
+              if (ds) {
+                for (const [id, el] of ds.selectedEls) {
+                  const n = currentState.nodes[id]
+                  if (n) {
+                    const newX = n.origin.x + dx
+                    const newY = n.origin.y + dy
+                    el.style.left = `${newX}px`
+                    el.style.top = `${newY}px`
+                    lastDomOrigins.current.set(id, { x: newX, y: newY })
+                  }
                 }
-                const updatedRegions = { ...s.regions }
-                for (const id of currentState.selectedRegionIds) {
-                  const r = s.regions[id]
-                  if (r) updatedRegions[id] = { ...r, origin: { x: r.origin.x + dx, y: r.origin.y + dy } }
+              }
+              // Track region positions (regions have no DOM element — commit on mouseup)
+              for (const id of currentState.selectedRegionIds) {
+                const r = currentState.regions[id]
+                if (r) {
+                  // dx/dy is total displacement from drag start (store position never changes during drag)
+                  lastRegionOrigins.current.set(id, { x: r.origin.x + dx, y: r.origin.y + dy })
                 }
-                return { nodes: updatedNodes, regions: updatedRegions }
-              })
+              }
               pendingOrigin.current = null
               return // Skip snap guides for multi-drag
             }
 
-            canvasStoreApi.getState().moveNode(nodeId, origin)
+            // Single-node drag: mutate DOM directly instead of calling moveNode
+            const ds = dragStateRef.current
+            if (ds?.nodeEl) {
+              ds.nodeEl.style.left = `${origin.x}px`
+              ds.nodeEl.style.top = `${origin.y}px`
+            }
+            lastDomOrigin.current = origin
             pendingOrigin.current = null
 
             // Update drop-target region highlight (single-node drag only).
-            // Skip when the node is already a member of the region under it,
-            // since "joining" is a no-op in that case.
+            // Uses pending origin since store position is stale during drag.
             {
-              const st = canvasStoreApi.getState()
-              const draggedNode = st.nodes[nodeId]
+              const st = currentState
+              const storeNode = st.nodes[nodeId]
+              const draggedSize = storeNode?.size
               let target: string | null = null
-              if (draggedNode) {
+              if (draggedSize) {
                 for (const region of Object.values(st.regions)) {
                   const ox = Math.max(
                     0,
                     Math.min(
-                      draggedNode.origin.x + draggedNode.size.width,
+                      origin.x + draggedSize.width,
                       region.origin.x + region.size.width,
-                    ) - Math.max(draggedNode.origin.x, region.origin.x),
+                    ) - Math.max(origin.x, region.origin.x),
                   )
                   const oy = Math.max(
                     0,
                     Math.min(
-                      draggedNode.origin.y + draggedNode.size.height,
+                      origin.y + draggedSize.height,
                       region.origin.y + region.size.height,
-                    ) - Math.max(draggedNode.origin.y, region.origin.y),
+                    ) - Math.max(origin.y, region.origin.y),
                   )
-                  const area = draggedNode.size.width * draggedNode.size.height
+                  const area = draggedSize.width * draggedSize.height
                   if (area > 0 && (ox * oy) / area > 0.5) {
-                    if (region.id !== draggedNode.regionId) target = region.id
+                    if (storeNode && region.id !== storeNode.regionId) target = region.id
                     break
                   }
                 }
@@ -401,21 +493,26 @@ export function useNodeDrag(nodeId: string, zoomLevel: number, canvasStoreApi: S
               }
             }
 
-            // Magnetic snap guides (runs at most once per frame)
+            // Magnetic snap guides (runs at most once per frame).
+            // Uses live drag origin for snap calculations, then applies
+            // the result via DOM mutation. pendingOrigin is updated so
+            // mouseup commits the snapped position.
             const settings = useSettingsStore.getState()
             if (settings.snapToGridEnabled) {
-              const currentState = canvasStoreApi.getState()
-              const currentNode2 = currentState.nodes[nodeId]
-              if (currentNode2) {
+              const currentState2 = canvasStoreApi.getState()
+              const storeNode2 = currentState2.nodes[nodeId]
+              if (storeNode2) {
+                // Use live drag position, not stale store position
+                const liveOrigin = origin
                 const idx = snapIndexRef.current
                 let neighbors: SnapCandidate[]
                 if (idx && idx.cells.size > 0) {
                   const CELL_SIZE = idx.cellSize
                   const seen = new Set<SnapCandidate>()
-                  const x0 = Math.floor((currentNode2.origin.x - 8) / CELL_SIZE)
-                  const y0 = Math.floor((currentNode2.origin.y - 8) / CELL_SIZE)
-                  const x1 = Math.floor((currentNode2.origin.x + currentNode2.size.width + 8) / CELL_SIZE)
-                  const y1 = Math.floor((currentNode2.origin.y + currentNode2.size.height + 8) / CELL_SIZE)
+                  const x0 = Math.floor((liveOrigin.x - 8) / CELL_SIZE)
+                  const y0 = Math.floor((liveOrigin.y - 8) / CELL_SIZE)
+                  const x1 = Math.floor((liveOrigin.x + storeNode2.size.width + 8) / CELL_SIZE)
+                  const y1 = Math.floor((liveOrigin.y + storeNode2.size.height + 8) / CELL_SIZE)
                   for (let cx = x0; cx <= x1; cx++) {
                     for (let cy = y0; cy <= y1; cy++) {
                       const bucket = idx.cells.get(`${cx},${cy}`)
@@ -426,42 +523,18 @@ export function useNodeDrag(nodeId: string, zoomLevel: number, canvasStoreApi: S
                 } else {
                   neighbors = idx ? idx.all : []
                 }
+                // Only show snap guides when we're actually close to a
+                // neighbor edge — no magnetic pull during hold, so the node
+                // stays locked 1:1 under the cursor. The hard grid snap on
+                // mouseup still runs below.
+                const GUIDE_THRESHOLD = 3
                 const snapResult = snapToEdges(
-                  { origin: currentNode2.origin, size: currentNode2.size },
+                  { origin: liveOrigin, size: storeNode2.size },
                   neighbors,
-                  8,
+                  GUIDE_THRESHOLD,
                 )
-
-                // Apply magnetic snapping with continuous quadratic pull
-                // across the full 0–8px range (no dead zones).
-                const snapped = snapResult.snappedOrigin
-                const dx = Math.abs(snapped.x - currentNode2.origin.x)
-                const dy = Math.abs(snapped.y - currentNode2.origin.y)
-
-                const magneticOrigin = { ...currentNode2.origin }
-                const axes = { x: false, y: false }
-
-                // X-axis magnetic pull (only if x snapped)
-                if (snapResult.lines.some((l) => l.axis === 'x') && dx < 8) {
-                  const t = 1 - (dx / 8) ** 2
-                  magneticOrigin.x = currentNode2.origin.x + (snapped.x - currentNode2.origin.x) * t
-                  axes.x = dx < 6
-                }
-
-                // Y-axis magnetic pull (only if y snapped)
-                if (snapResult.lines.some((l) => l.axis === 'y') && dy < 8) {
-                  const t = 1 - (dy / 8) ** 2
-                  magneticOrigin.y = currentNode2.origin.y + (snapped.y - currentNode2.origin.y) * t
-                  axes.y = dy < 6
-                }
-
-                lastMagneticAxes.current = axes
-
-                if (snapResult.lines.length > 0) {
-                  canvasStoreApi.getState().moveNode(nodeId, magneticOrigin)
-                }
-
-                currentState.setSnapGuides({ lines: snapResult.lines })
+                lastMagneticAxes.current = { x: false, y: false }
+                currentState2.setSnapGuides({ lines: snapResult.lines })
               }
             }
           })

@@ -40,7 +40,8 @@ function injectCanvasInteractingStyle(): void {
   document.head.appendChild(style)
 }
 
-const RegionsLayer: React.FC<{ zoomLevel: number }> = React.memo(({ zoomLevel }) => {
+const RegionsLayer: React.FC = React.memo(() => {
+  const zoomLevel = useCanvasStoreContext((s) => s.zoomLevel)
   const regionList = useCanvasStoreContext(
     (s) => Object.values(s.regions),
     shallow,
@@ -76,11 +77,10 @@ interface CanvasProps {
 
 const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
   const canvasRef = useRef<HTMLDivElement>(null)
+  const worldRef = useRef<HTMLDivElement>(null)
   const canvasApi = useCanvasStoreApi()
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
 
-  const zoom = useCanvasStoreContext((s) => s.zoomLevel)
-  const offset = useCanvasStoreContext((s) => s.viewportOffset)
   const marquee = useUIStore((s) => s.marquee)
 
   const {
@@ -95,6 +95,29 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
 
   // Inject the canvas-interacting style once at module level (not per mount)
   useEffect(injectCanvasInteractingStyle, [])
+
+  // Imperatively update the world div transform on zoom/offset changes so
+  // Canvas itself never re-renders during pan/zoom — only the world div moves.
+  useEffect(() => {
+    const applyTransform = (zoom: number, offset: { x: number; y: number }) => {
+      const el = worldRef.current
+      if (!el) return
+      el.style.transform = `scale(${zoom}) translate(${offset.x / zoom}px, ${offset.y / zoom}px)`
+      el.style.setProperty('--zoom', String(zoom))
+    }
+
+    // Apply current state immediately on mount
+    const { zoomLevel, viewportOffset } = canvasApi.getState()
+    applyTransform(zoomLevel, viewportOffset)
+
+    // Subscribe to future changes
+    const unsubscribe = canvasApi.subscribe((state, prev) => {
+      if (state.zoomLevel !== prev.zoomLevel || state.viewportOffset !== prev.viewportOffset) {
+        applyTransform(state.zoomLevel, state.viewportOffset)
+      }
+    })
+    return unsubscribe
+  }, []) // mount-only
 
   // Auto-focus the node that occupies the most visible viewport area (opt-in).
   useAutoFocusLargestVisible(canvasApi)
@@ -220,10 +243,6 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
     }
   }, [marquee])
 
-  // CSS transform: scale first, then translate (divide offset by zoom since
-  // the translate happens in the scaled coordinate space)
-  const worldTransform = `scale(${zoom}) translate(${offset.x / zoom}px, ${offset.y / zoom}px)`
-
   // When the interaction hook flags a right-click on empty canvas, fire a
   // native context menu and dispatch the picked action.
   useEffect(() => {
@@ -281,16 +300,15 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
     >
       {/* World div: transformed to implement pan/zoom */}
       <div
+        ref={worldRef}
         style={{
           position: 'absolute',
           top: 0,
           left: 0,
           width: 1,
           height: 1,
-          transform: worldTransform,
           transformOrigin: '0 0',
           willChange: 'transform',
-          ['--zoom' as string]: zoom,
         }}
         onClick={handleWorldClick}
       >
@@ -298,7 +316,7 @@ const Canvas: React.FC<CanvasProps> = ({ children, onCreateAtPoint }) => {
           containerWidth={containerSize.width}
           containerHeight={containerSize.height}
         />
-        <RegionsLayer zoomLevel={zoom} />
+        <RegionsLayer />
         <AnnotationsLayer />
         <SnapGuides />
         {marqueeRect && (

@@ -32,6 +32,8 @@
   --activity-orange: #ff9f0a;
   --shadow-node: rgba(0, 0, 0, 0.45);
   --shadow-node-focused: rgba(74, 158, 255, 0.35);
+  --node-bg-active: #1a1917;
+  --node-dim-overlay: rgba(0, 0, 0, 0.18);
   --scrollbar-thumb: rgba(255, 255, 255, 0.15);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
   --surface-hover: rgba(255, 255, 255, 0.06);
@@ -68,6 +70,8 @@
   --activity-orange: #ff9f0a;
   --shadow-node: rgba(0, 0, 0, 0.45);
   --shadow-node-focused: rgba(74, 158, 255, 0.35);
+  --node-bg-active: #1a1917;
+  --node-dim-overlay: rgba(0, 0, 0, 0.18);
   --scrollbar-thumb: rgba(255, 255, 255, 0.15);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
   --surface-hover: rgba(255, 255, 255, 0.06);
@@ -80,41 +84,46 @@
 }
 
 [data-theme="light-subtle"] {
-  /* Solarized-warm light: creamy warm-grey surfaces with clearly layered
-     depth, near-black warm text, Solarized blue accents. */
-  --surface-0: #bfb89f;
-  --surface-1: #ccc5ac;
-  --surface-2: #d6cfb6;
-  --surface-3: #dfd8be;
-  --surface-4: #ebe3c8;
-  --surface-5: #f2ebd3;
-  --surface-6: #faf4e3;
-  --titlebar-bg: #b5ad93;
-  --canvas-bg: #d6cfb6;
-  --canvas-bg-alt: #dfd8be;
-  --grid-dot: rgba(48, 36, 20, 0.18);
-  --grid-line: rgba(48, 36, 20, 0.06);
-  --border-subtle: rgba(48, 36, 20, 0.14);
-  --border-strong: rgba(48, 36, 20, 0.26);
-  --border-focus: #268bd2;
-  --text-primary: #1c1813;
-  --text-secondary: #4a3f30;
-  --text-muted: #7a6d58;
-  --text-inverse: #faf4e3;
-  --focus-blue: #268bd2;
-  --activity-green: #859900;
+  /* Bone / Khaki Beige / Taupe / Azure Blue / Blue Slate palette.
+     Warm neutral surfaces layered from Khaki → Bone, Taupe for text,
+     Azure Blue accents, Blue Slate for secondary emphasis. */
+  --surface-0: #b1a696;
+  --surface-1: #bdb3a3;
+  --surface-2: #c8bfb0;
+  --surface-3: #c3b9a9;
+  --surface-4: #beb4a4;
+  --surface-5: #b8ae9e;
+  --surface-6: #b2a898;
+  --titlebar-bg: #b1a696;
+  --canvas-bg: #c8bfb0;
+  --canvas-bg-alt: #d2cabc;
+  --grid-dot: rgba(56, 50, 43, 0.20);
+  --grid-line: rgba(56, 50, 43, 0.07);
+  --border-subtle: rgba(56, 50, 43, 0.14);
+  --border-strong: rgba(56, 50, 43, 0.28);
+  --border-focus: #3c7ef0;
+  --text-primary: #1a1612;
+  --text-secondary: #38322b;
+  --text-muted: #5e574c;
+  --text-inverse: #ddd5ca;
+  --focus-blue: #3c7ef0;
+  --activity-green: #4a8f3a;
   --activity-orange: #cb4b16;
-  --shadow-node: rgba(48, 36, 20, 0.14);
-  --shadow-node-focused: rgba(38, 139, 210, 0.32);
-  --scrollbar-thumb: rgba(48, 36, 20, 0.22);
-  --scrollbar-thumb-hover: rgba(48, 36, 20, 0.38);
-  --surface-hover: rgba(48, 36, 20, 0.10);
-  --surface-hover-strong: rgba(48, 36, 20, 0.18);
-  --git-added: #859900;
+  --shadow-node: rgba(56, 50, 43, 0.18);
+  --shadow-node-focused: rgba(60, 126, 240, 0.35);
+  /* Active node is slightly darker than surface-3 so the contrast against the
+     (dimmed) inactive nodes is softened — "make the active one less bright". */
+  --node-bg-active: #c8bfb0;
+  --node-dim-overlay: rgba(56, 50, 43, 0.10);
+  --scrollbar-thumb: rgba(56, 50, 43, 0.24);
+  --scrollbar-thumb-hover: rgba(56, 50, 43, 0.40);
+  --surface-hover: rgba(56, 50, 43, 0.08);
+  --surface-hover-strong: rgba(56, 50, 43, 0.16);
+  --git-added: #4a8f3a;
   --git-modified: #b58900;
   --git-deleted: #dc322f;
-  --git-untracked: #268bd2;
-  --git-renamed: #6c71c4;
+  --git-untracked: #3c7ef0;
+  --git-renamed: #5e747f;
 }
 
 [data-theme="dark-cold"] {
@@ -143,6 +152,8 @@
   --activity-orange: #ff9f0a;
   --shadow-node: rgba(0, 0, 0, 0.60);
   --shadow-node-focused: rgba(10, 132, 255, 0.32);
+  --node-bg-active: #1c1c1e;
+  --node-dim-overlay: rgba(0, 0, 0, 0.22);
   --scrollbar-thumb: rgba(235, 235, 245, 0.12);
   --scrollbar-thumb-hover: rgba(235, 235, 245, 0.22);
   --surface-hover: rgba(235, 235, 245, 0.06);

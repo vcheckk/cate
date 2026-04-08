@@ -32,6 +32,19 @@ import {
 } from '../../shared/ipc-channels'
 
 /**
+ * Validate that filePath stays inside cwd and return its relative form.
+ * Throws if filePath resolves outside the workspace root.
+ */
+function validateFilePath(cwd: string, filePath: string): string {
+  const resolvedCwd = path.resolve(cwd)
+  const resolved = path.resolve(cwd, filePath)
+  if (resolved !== resolvedCwd && !resolved.startsWith(resolvedCwd + path.sep)) {
+    throw new Error('filePath escapes workspace')
+  }
+  return path.relative(cwd, resolved)
+}
+
+/**
  * Check if a directory is inside a git repository by looking for a .git directory.
  */
 async function isGitRepo(dirPath: string): Promise<boolean> {
@@ -97,9 +110,10 @@ export function registerHandlers(): void {
 
   ipcMain.handle(GIT_DIFF, async (_event, cwd: string, filePath?: string) => {
     try {
-      const git = simpleGit(validateCwd(cwd))
+      const validCwd = validateCwd(cwd)
+      const git = simpleGit(validCwd)
       if (filePath) {
-        return await git.diff([filePath])
+        return await git.diff([validateFilePath(validCwd, filePath)])
       }
       return await git.diff()
     } catch (error) {
@@ -110,8 +124,9 @@ export function registerHandlers(): void {
 
   ipcMain.handle(GIT_STAGE, async (_event, cwd: string, filePath: string) => {
     try {
-      const git = simpleGit(validateCwd(cwd))
-      await git.add(filePath)
+      const validCwd = validateCwd(cwd)
+      const git = simpleGit(validCwd)
+      await git.add(validateFilePath(validCwd, filePath))
     } catch (error) {
       log.error(`[${GIT_STAGE}]`, error)
       throw error instanceof Error ? error : new Error(String(error))
@@ -120,8 +135,9 @@ export function registerHandlers(): void {
 
   ipcMain.handle(GIT_UNSTAGE, async (_event, cwd: string, filePath: string) => {
     try {
-      const git = simpleGit(validateCwd(cwd))
-      await git.reset([filePath])
+      const validCwd = validateCwd(cwd)
+      const git = simpleGit(validCwd)
+      await git.reset([validateFilePath(validCwd, filePath)])
     } catch (error) {
       log.error(`[${GIT_UNSTAGE}]`, error)
       throw error instanceof Error ? error : new Error(String(error))
@@ -254,9 +270,10 @@ export function registerHandlers(): void {
 
   ipcMain.handle(GIT_DIFF_STAGED, async (_event, cwd: string, filePath?: string) => {
     try {
-      const git = simpleGit(validateCwd(cwd))
+      const validCwd = validateCwd(cwd)
+      const git = simpleGit(validCwd)
       if (filePath) {
-        return await git.diff(['--cached', filePath])
+        return await git.diff(['--cached', validateFilePath(validCwd, filePath)])
       }
       return await git.diff(['--cached'])
     } catch (error) {
@@ -291,8 +308,9 @@ export function registerHandlers(): void {
 
   ipcMain.handle(GIT_DISCARD_FILE, async (_event, cwd: string, filePath: string) => {
     try {
-      const git = simpleGit(validateCwd(cwd))
-      await git.checkout(['--', filePath])
+      const validCwd = validateCwd(cwd)
+      const git = simpleGit(validCwd)
+      await git.checkout(['--', validateFilePath(validCwd, filePath)])
     } catch (error) {
       log.error(`[${GIT_DISCARD_FILE}]`, error)
       throw error instanceof Error ? error : new Error(String(error))

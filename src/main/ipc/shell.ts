@@ -39,11 +39,26 @@ interface ScanResult {
   previouslyHadAgent: boolean
 }
 
+// Concurrency limiter — caps simultaneous execFile calls across all terminals
+function createLimit(max: number) {
+  let active = 0
+  const queue: Array<() => void> = []
+  const next = () => { active--; const fn = queue.shift(); if (fn) { active++; fn() } }
+  return <T>(fn: () => Promise<T>): Promise<T> => new Promise((resolve, reject) => {
+    const run = () => fn().then(v => { next(); resolve(v) }, e => { next(); reject(e) })
+    if (active < max) { active++; run() } else queue.push(run)
+  })
+}
+const limit = createLimit(4)
+
 // Registered terminals for process monitoring
 const registeredTerminals: Map<string, TerminalRegistration> = new Map()
 
 // Track previous state for transition detection
 const previousStates: Map<string, PreviousState> = new Map()
+
+// Backoff: terminals that failed last cycle are skipped once
+const skipNextScan: Set<string> = new Set()
 
 // Polling interval handle
 let pollInterval: ReturnType<typeof setInterval> | null = null
@@ -57,7 +72,7 @@ let pollBusy = false
  */
 function getChildPids(pid: number): Promise<number[]> {
   if (!pid || pid <= 0) return Promise.resolve([])
-  return new Promise((resolve) => {
+  return limit(() => new Promise((resolve) => {
     execFile('pgrep', ['-P', `${pid}`], {
       encoding: 'utf-8',
       timeout: 2000,
@@ -75,7 +90,7 @@ function getChildPids(pid: number): Promise<number[]> {
           .filter((n) => !isNaN(n))
       )
     })
-  })
+  }))
 }
 
 /**
@@ -84,7 +99,7 @@ function getChildPids(pid: number): Promise<number[]> {
  */
 function getProcessName(pid: number): Promise<string | null> {
   if (!pid || pid <= 0) return Promise.resolve(null)
-  return new Promise((resolve) => {
+  return limit(() => new Promise((resolve) => {
     execFile('ps', ['-o', 'comm=', '-p', `${pid}`], {
       encoding: 'utf-8',
       timeout: 2000,
@@ -102,7 +117,7 @@ function getProcessName(pid: number): Promise<string | null> {
       const parts = name.split('/')
       resolve(parts[parts.length - 1])
     })
-  })
+  }))
 }
 
 /**
@@ -180,7 +195,7 @@ async function scanListeningPorts(): Promise<Map<string, number[]>> {
   }
   await Promise.all(pidPromises)
 
-  return new Promise((resolve) => {
+  return limit(() => new Promise((resolve) => {
     execFile('lsof', ['-iTCP', '-sTCP:LISTEN', '-P', '-n', '-F', 'pn'], {
       timeout: 5000,
     }, (err, stdout) => {
@@ -214,12 +229,12 @@ async function scanListeningPorts(): Promise<Map<string, number[]>> {
 
       resolve(result)
     })
-  })
+  }))
 }
 
 function getProcessCwd(pid: number): Promise<string | null> {
   if (!pid || pid <= 0) return Promise.resolve(null)
-  return new Promise((resolve) => {
+  return limit(() => new Promise((resolve) => {
     execFile('lsof', ['-p', `${pid}`, '-d', 'cwd', '-Fn'], {
       encoding: 'utf-8',
       timeout: 2000,
@@ -236,7 +251,7 @@ function getProcessCwd(pid: number): Promise<string | null> {
       }
       resolve(null)
     })
-  })
+  }))
 }
 
 /**
@@ -319,12 +334,23 @@ function startPolling(): void {
       if (entries.length === 0) return
       const scanResults = await Promise.all(
         entries.map(async ([terminalId, info]) => {
-          const result = await scanTerminal(terminalId, info)
-          return { terminalId, info, result }
+          if (skipNextScan.has(terminalId)) {
+            skipNextScan.delete(terminalId)
+            return null
+          }
+          try {
+            const result = await scanTerminal(terminalId, info)
+            return { terminalId, info, result }
+          } catch (e) {
+            skipNextScan.add(terminalId)
+            return null
+          }
         })
       )
 
-      for (const { terminalId, info, result } of scanResults) {
+      for (const entry of scanResults) {
+        if (!entry) continue
+        const { terminalId, info, result } = entry
         // Update previous state
         previousStates.set(terminalId, {
           agentState: result.agentState,
@@ -360,12 +386,20 @@ function startPolling(): void {
       // --- CWD updates (concurrent) ---
       const cwdResults = await Promise.all(
         entries.map(async ([terminalId, info]) => {
-          const cwd = await getProcessCwd(info.shellPid)
-          return { terminalId, info, cwd }
+          if (skipNextScan.has(terminalId)) return null
+          try {
+            const cwd = await getProcessCwd(info.shellPid)
+            return { terminalId, info, cwd }
+          } catch {
+            skipNextScan.add(terminalId)
+            return null
+          }
         })
       )
 
-      for (const { terminalId, info, cwd } of cwdResults) {
+      for (const cwdEntry of cwdResults) {
+        if (!cwdEntry) continue
+        const { terminalId, info, cwd } = cwdEntry
         if (cwd) {
           sendToWindow(info.ownerWindowId, SHELL_CWD_UPDATE, terminalId, cwd)
         }
@@ -405,6 +439,7 @@ export function unregisterTerminalsForWindow(windowId: number): void {
     if (info.ownerWindowId === windowId) {
       registeredTerminals.delete(terminalId)
       previousStates.delete(terminalId)
+      skipNextScan.delete(terminalId)
     }
   }
   if (registeredTerminals.size === 0) {
@@ -447,6 +482,7 @@ export function registerHandlers(): void {
   ipcMain.handle(SHELL_UNREGISTER_TERMINAL, async (_event, terminalId: string) => {
     registeredTerminals.delete(terminalId)
     previousStates.delete(terminalId)
+    skipNextScan.delete(terminalId)
     if (registeredTerminals.size === 0) {
       stopPolling()
     }

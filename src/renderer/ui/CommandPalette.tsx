@@ -162,8 +162,8 @@ export const CommandPalette: React.FC = () => {
       },
       {
         id: 'autoLayout',
-        title: 'Auto-Layout Panels',
-        shortcutText: '',
+        title: 'Auto-Layout Canvas',
+        shortcutText: '\u21E7\u2318L',
         icon: <LayersIcon />,
         action: () => canvasApi.getState().autoLayout(),
       },

@@ -233,6 +233,9 @@ export interface ElectronAPI {
   /** Register a callback for flush-save requests from the main process. Returns unsubscribe. */
   onSessionFlushSave(callback: () => void): () => void
 
+  /** Notify the main process that the flush save completed. */
+  sessionFlushSaveDone(): void
+
   // ---------------------------------------------------------------------------
   // App
   // ---------------------------------------------------------------------------

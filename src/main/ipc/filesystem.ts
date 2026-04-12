@@ -7,7 +7,7 @@ import path from 'path'
 import { watch, FSWatcher } from 'chokidar'
 import { ipcMain } from 'electron'
 import log from '../logger'
-import { validatePathStrict } from './pathValidation'
+import { validatePathStrict, validatePathForCreation } from './pathValidation'
 import {
   FS_READ_FILE,
   FS_WRITE_FILE,
@@ -241,7 +241,7 @@ export function registerHandlers(): void {
 
   ipcMain.handle(FS_WRITE_FILE, async (_event, filePath: string, content: string) => {
     try {
-      await writeFile(await validatePathStrict(filePath), content)
+      await writeFile(await validatePathForCreation(filePath), content)
     } catch (error) {
       log.error(`[${FS_WRITE_FILE}]`, error)
       throw error instanceof Error ? error : new Error(String(error))
@@ -320,7 +320,7 @@ export function registerHandlers(): void {
 
   ipcMain.handle(FS_RENAME, async (_event, oldPath: string, newPath: string) => {
     try {
-      await fs.rename(await validatePathStrict(oldPath), await validatePathStrict(newPath))
+      await fs.rename(await validatePathStrict(oldPath), await validatePathForCreation(newPath))
     } catch (error) {
       log.error(`[${FS_RENAME}]`, error)
       throw error instanceof Error ? error : new Error(String(error))
@@ -329,7 +329,7 @@ export function registerHandlers(): void {
 
   ipcMain.handle(FS_MKDIR, async (_event, dirPath: string) => {
     try {
-      await fs.mkdir(await validatePathStrict(dirPath), { recursive: true })
+      await fs.mkdir(await validatePathForCreation(dirPath), { recursive: true })
     } catch (error) {
       log.error(`[${FS_MKDIR}]`, error)
       throw error instanceof Error ? error : new Error(String(error))

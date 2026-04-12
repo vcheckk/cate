@@ -12,6 +12,7 @@ import {
   DOCK_WINDOW_INIT, DOCK_WINDOW_SYNC_STATE, DOCK_WINDOWS_LIST,
   CROSS_WINDOW_DRAG_START, CROSS_WINDOW_DRAG_UPDATE, CROSS_WINDOW_DRAG_DROP, CROSS_WINDOW_DRAG_CANCEL, CROSS_WINDOW_DRAG_RESOLVE,
   SESSION_FLUSH_SAVE,
+  SESSION_FLUSH_SAVE_DONE,
 } from '../shared/ipc-channels'
 import { registerHandlers as registerTerminalHandlers, flushAllLoggers, killAllTerminals } from './ipc/terminal'
 import { registerHandlers as registerFilesystemHandlers, stopWatchersForWindow } from './ipc/filesystem'
@@ -885,29 +886,82 @@ app.on('activate', () => {
   }
 })
 
-app.on('before-quit', () => {
+// ---------------------------------------------------------------------------
+// Quit coordination — the renderer needs live PTYs to capture terminal CWD
+// and scrollback, so we defer PTY teardown until the renderer confirms the
+// session save is complete. Flow:
+//   1. before-quit: flush loggers, send SESSION_FLUSH_SAVE to renderer, defer quit
+//   2. renderer saves session (async — needs live PTYs for CWD/scrollback)
+//   3. renderer sends SESSION_FLUSH_SAVE_DONE
+//   4. main process re-triggers app.quit()
+//   5. before-quit fires again (sessionFlushed = true, falls through)
+//   6. will-quit: sync fallback save, kill PTYs, _exit(0)
+// ---------------------------------------------------------------------------
+
+let sessionFlushed = false
+const FLUSH_TIMEOUT_MS = 3000
+
+app.on('before-quit', (event) => {
+  if (sessionFlushed) {
+    // Second pass — renderer already saved, let quit proceed to will-quit
+    log.info('before-quit: session already flushed, proceeding')
+    return
+  }
+
   log.info('Before quit, flushing loggers and requesting session save')
   flushAllLoggers()
-  // Kill all PTYs now, while the JS environment is still alive. If we let
-  // them die during Environment::CleanupHandles, node-pty's ThreadSafeFunction
-  // exit callback throws into a torn-down context and SIGABRTs the process.
-  killAllTerminals()
-  // Ask the main window renderer to save immediately (cancels debounce)
+
   const allWindows = BrowserWindow.getAllWindows()
   const mainWin = allWindows.find((w) => !w.isDestroyed() && getWindowType(w.id) === 'main')
-  if (mainWin) {
-    mainWin.webContents.send(SESSION_FLUSH_SAVE)
+
+  if (!mainWin) {
+    // No renderer to save — proceed immediately
+    sessionFlushed = true
+    return
   }
+
+  // Prevent quit until the renderer confirms session save
+  event.preventDefault()
+
+  const proceed = () => {
+    sessionFlushed = true
+    app.quit()
+  }
+
+  // Listen for renderer ACK
+  ipcMain.once(SESSION_FLUSH_SAVE_DONE, () => {
+    log.info('Session flush save confirmed by renderer')
+    proceed()
+  })
+
+  // Safety timeout — don't hang forever if the renderer is unresponsive
+  setTimeout(() => {
+    if (!sessionFlushed) {
+      log.warn('Session flush timed out after %dms, proceeding with quit', FLUSH_TIMEOUT_MS)
+      proceed()
+    }
+  }, FLUSH_TIMEOUT_MS)
+
+  mainWin.webContents.send(SESSION_FLUSH_SAVE)
 })
 
 app.on('will-quit', () => {
   // Last-resort synchronous save from cached session data.
-  // The renderer flush above may not have completed, so this ensures
-  // we at least write the most recent successfully-saved state.
+  // The renderer flush above should have completed, but this ensures
+  // we write something if it didn't.
   log.info('will-quit: sync session save fallback')
   saveSessionSync(getLastSavedSession())
+  // Kill all PTYs now — AFTER session save so the renderer had access to live
+  // PTY data (CWD, scrollback) during the flush triggered in before-quit.
+  // Must happen while the JS environment is still alive. If we let them die
+  // during Environment::CleanupHandles, node-pty's ThreadSafeFunction exit
+  // callback throws into a torn-down context and SIGABRTs the process.
+  killAllTerminals()
   // Force immediate exit to avoid node-pty's ThreadSafeFunction firing into
   // a torn-down JS environment during node::Environment::CleanupHandles,
   // which aborts the process with SIGABRT (Napi::Error::ThrowAsJavaScriptException).
-  process.exit(0)
+  // Use app.exit() instead of process.exit() because the latter still runs
+  // FreeEnvironment → CleanupHandles → uv_run, which flushes pending
+  // ThreadSafeFunction callbacks queued by pty.kill().
+  app.exit(0)
 })

@@ -218,6 +218,12 @@ function killTerminal(id: string): void {
   logger.flush()
   removeLogger(id)  // flush + stop timer + remove from map (keeps files)
 
+  // Kill the entire process group so child processes (dev servers, watchers,
+  // etc.) don't survive as zombies keeping ports open.
+  const pid = terminalPids.get(id)
+  if (pid) {
+    try { process.kill(-pid, 'SIGTERM') } catch { /* process group may be gone */ }
+  }
   const pty = terminals.get(id)
   if (pty) {
     pty.kill()
@@ -346,6 +352,16 @@ export function registerHandlers(): void {
 export function killAllTerminals(): void {
   shuttingDown = true
   for (const [id, pty] of terminals) {
+    // Kill the entire process group so child processes (dev servers, watchers,
+    // etc.) don't survive as zombies keeping ports open after Cate quits.
+    const pid = terminalPids.get(id)
+    if (pid) {
+      try {
+        process.kill(-pid, 'SIGTERM')
+      } catch {
+        // Process group may already be gone
+      }
+    }
     try {
       pty.kill()
     } catch {

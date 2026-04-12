@@ -76,6 +76,7 @@ export const SESSION_SAVE = 'session:save'
 export const SESSION_LOAD = 'session:load'
 export const SESSION_CLEAR = 'session:clear'
 export const SESSION_FLUSH_SAVE = 'session:flushSave' // main -> renderer
+export const SESSION_FLUSH_SAVE_DONE = 'session:flushSaveDone' // renderer -> main
 
 // App
 export const APP_GET_PATH = 'app:getPath'

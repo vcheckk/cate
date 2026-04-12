@@ -82,6 +82,46 @@ export async function validatePathStrict(filePath: string): Promise<string> {
 }
 
 /**
+ * Validates a path for file/directory creation.  The target itself need not
+ * exist yet, but its parent directory must exist and resolve (symlink-free)
+ * to a location within an allowed root.  The basename is checked for
+ * obviously dangerous values (.., null bytes, etc.).
+ *
+ * Returns the safe absolute path (`realParent + baseName`).
+ */
+export async function validatePathForCreation(filePath: string): Promise<string> {
+  // Cheap lexical check on the full intended path.
+  validatePath(filePath)
+
+  const parentDir = path.dirname(path.resolve(filePath))
+  const baseName = path.basename(filePath)
+
+  if (!baseName || baseName === '.' || baseName === '..' || baseName.includes('\0')) {
+    throw new Error(`Access denied: invalid entry name "${baseName}"`)
+  }
+
+  let realParent: string
+  try {
+    realParent = await fs.realpath(parentDir)
+  } catch (err) {
+    throw new Error(`Access denied: cannot resolve real path for parent "${parentDir}": ${err}`)
+  }
+
+  const tmpDir = path.resolve(os.tmpdir())
+  if (realParent === tmpDir || realParent.startsWith(tmpDir + path.sep)) {
+    return path.join(realParent, baseName)
+  }
+
+  for (const root of allowedRoots) {
+    if (realParent.startsWith(root + path.sep) || realParent === root) {
+      return path.join(realParent, baseName)
+    }
+  }
+
+  throw new Error(`Access denied: resolved parent "${realParent}" is outside allowed directories`)
+}
+
+/**
  * Validates a directory path for git/shell operations.
  * Same as validatePath but specifically for cwd parameters.
  */

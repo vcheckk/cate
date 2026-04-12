@@ -53,6 +53,7 @@ import {
   SESSION_LOAD,
   SESSION_CLEAR,
   SESSION_FLUSH_SAVE,
+  SESSION_FLUSH_SAVE_DONE,
   APP_GET_PATH,
   MENU_OPEN_SETTINGS,
   MENU_TRIGGER_ACTION,
@@ -454,6 +455,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = () => callback()
     ipcRenderer.on(SESSION_FLUSH_SAVE, handler)
     return () => ipcRenderer.removeListener(SESSION_FLUSH_SAVE, handler)
+  },
+
+  sessionFlushSaveDone(): void {
+    ipcRenderer.send(SESSION_FLUSH_SAVE_DONE)
   },
 
   // ---------------------------------------------------------------------------

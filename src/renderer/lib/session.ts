@@ -625,8 +625,25 @@ export function setupAutoSave(canvasStoreApi?: StoreApi<CanvasStore>): () => voi
 
   // Listen for flush-save requests from main process (quit, window close)
   const unsubFlush = window.electronAPI.onSessionFlushSave(() => {
+    // Run save synchronously and notify main process when done so it can
+    // proceed with quit. Without this ACK, the app may exit before the
+    // async session save completes.
     pendingSave = true
-    runSave()
+    if (saveInFlight) {
+      // A save is already running — mark dirty and ACK when it finishes
+      pendingSave = true
+      return
+    }
+    saveInFlight = true
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null }
+    if (maxWaitTimer) { clearTimeout(maxWaitTimer); maxWaitTimer = null }
+    pendingSave = false
+    saveSession()
+      .catch(() => {})
+      .finally(() => {
+        saveInFlight = false
+        window.electronAPI.sessionFlushSaveDone()
+      })
   })
 
   return () => {

@@ -334,8 +334,8 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
         await reloadChildren()
       }
       onTreeChanged?.()
-    } catch {
-      /* ignore */
+    } catch (err) {
+      console.error('[file-tree] Failed to create entry:', err)
     }
   }, [isCreating, createValue, node.isDirectory, node.path, parentDir, reloadChildren, onTreeChanged])
 
@@ -347,8 +347,8 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
     try {
       await window.electronAPI.fsDelete(node.path)
       onTreeChanged?.()
-    } catch {
-      /* ignore */
+    } catch (err) {
+      console.error('[file-tree] Failed to delete entry:', err)
     }
   }, [node.name, node.path, node.isDirectory, onTreeChanged])
 

@@ -237,8 +237,8 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ rootPath }) => {
         await window.electronAPI.fsWriteFile(newPath, '')
       }
       loadTree(rootPath)
-    } catch {
-      /* ignore */
+    } catch (err) {
+      console.error('[file-explorer] Failed to create entry:', err)
     }
   }, [rootCreating, rootCreateValue, rootPath, loadTree])
 

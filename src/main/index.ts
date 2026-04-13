@@ -26,7 +26,7 @@ import { registerHandlers as registerNotificationHandlers } from './ipc/notifica
 import { writeDragTempFile, cleanupDragTempFile, createDragGhostImage } from './ipc/drag'
 import { registerWindow, getWindowType, sendToWindow, broadcastToAll, broadcastToAllExcept, setPanelWindowMeta, setPanelWindowTerminalPtyId, listPanelWindows, getWindow, setDockWindowState, listDockWindows } from './windowRegistry'
 import { registerWorkspaceHandlers } from './workspaceManager'
-import { registerUsageHandlers } from './ipc/usage'
+import { registerUsageHandlers, disposeUsageWatchers } from './ipc/usage'
 import { addAllowedRoot, validatePath } from './ipc/pathValidation'
 import { buildApplicationMenu, rebuildApplicationMenu, setNewMainWindowFn } from './menu'
 import { initShellEnv } from './shellEnv'
@@ -951,6 +951,8 @@ app.on('will-quit', () => {
   // we write something if it didn't.
   log.info('will-quit: sync session save fallback')
   saveSessionSync(getLastSavedSession())
+  // Close usage file watchers and clear caches to release file descriptors
+  disposeUsageWatchers()
   // Kill all PTYs now — AFTER session save so the renderer had access to live
   // PTY data (CWD, scrollback) during the flush triggered in before-quit.
   // Must happen while the JS environment is still alive. If we let them die

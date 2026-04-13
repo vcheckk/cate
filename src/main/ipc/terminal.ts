@@ -21,7 +21,7 @@ import {
   TERMINAL_LOG_DELETE,
   TERMINAL_SCROLLBACK_SAVE,
 } from '../../shared/ipc-channels'
-import { getOrCreateLogger, removeLogger, flushAll as flushAllLoggers } from './terminalLogger'
+import { getOrCreateLogger, removeLogger, flushAll as flushAllLoggers, disposeAll as disposeAllLoggers } from './terminalLogger'
 import { sendToWindow, windowFromEvent } from '../windowRegistry'
 import { getShellEnv } from '../shellEnv'
 
@@ -319,9 +319,16 @@ export function registerHandlers(): void {
       if (data) return data
     } catch { /* fall through to raw log */ }
 
-    // Fall back to raw PTY log
-    const logger = new TerminalLogger(terminalId)
-    const data = logger.readAll()
+    // Fall back to raw PTY log — use the existing logger if one is active,
+    // otherwise read log files directly to avoid leaking a TerminalLogger
+    // instance (each one starts a setInterval that never gets cleaned up).
+    const existing = getOrCreateLogger(terminalId)
+    // If this terminal has an active PTY, a logger already existed — safe to use.
+    // If the PTY is gone, we just created a new logger; read then clean it up.
+    const data = existing.readAll()
+    if (!terminals.has(terminalId)) {
+      removeLogger(terminalId)
+    }
     return data || null
   })
 
@@ -337,9 +344,13 @@ export function registerHandlers(): void {
 
   // Delete terminal log files
   ipcMain.handle(TERMINAL_LOG_DELETE, async (_event, terminalId: string): Promise<void> => {
-    const { TerminalLogger } = await import('./terminalLogger')
-    const logger = new TerminalLogger(terminalId)
+    // Use the existing logger if active, otherwise create one temporarily
+    // and clean it up immediately to avoid leaking the setInterval timer.
+    const logger = getOrCreateLogger(terminalId)
     logger.delete()
+    if (!terminals.has(terminalId)) {
+      removeLogger(terminalId)
+    }
   })
 }
 
@@ -351,6 +362,8 @@ export function registerHandlers(): void {
  */
 export function killAllTerminals(): void {
   shuttingDown = true
+  // Dispose all terminal loggers (flush + stop timers + clear map)
+  disposeAllLoggers()
   for (const [id, pty] of terminals) {
     // Kill the entire process group so child processes (dev servers, watchers,
     // etc.) don't survive as zombies keeping ports open after Cate quits.

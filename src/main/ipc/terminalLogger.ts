@@ -237,3 +237,15 @@ export function flushAll(): void {
     logger.flush()
   }
 }
+
+/**
+ * Flush, stop timers, and clear all loggers — call on app quit to prevent
+ * leaked setInterval timers from accumulating.
+ */
+export function disposeAll(): void {
+  for (const [id, logger] of loggers) {
+    logger.flush()
+    ;(logger as any).stopTimer()
+    loggers.delete(id)
+  }
+}

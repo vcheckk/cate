@@ -38,6 +38,7 @@ interface FileCacheEntry {
 // =============================================================================
 
 const fileCache = new Map<string, FileCacheEntry>()
+const MAX_FILE_CACHE_SIZE = 2000
 
 // =============================================================================
 // Directory roots
@@ -241,6 +242,18 @@ async function parseFileIncremental(filePath: string, tool: AgentTool, projectPa
     projectPath,
     tool,
   })
+
+  // Evict oldest entries if cache exceeds size cap to prevent unbounded growth
+  if (fileCache.size > MAX_FILE_CACHE_SIZE) {
+    const excess = fileCache.size - MAX_FILE_CACHE_SIZE
+    let removed = 0
+    for (const key of fileCache.keys()) {
+      if (removed >= excess) break
+      fileCache.delete(key)
+      fileCwdCache.delete(key)
+      removed++
+    }
+  }
 }
 
 // =============================================================================
@@ -457,6 +470,7 @@ function buildSummary(): UsageSummary {
 // =============================================================================
 
 const watchers: FSWatcher[] = []
+const activeDebounceTimers: Array<ReturnType<typeof setTimeout>> = []
 
 function broadcastUpdate(changedProjects: string[]): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -502,7 +516,11 @@ function startWatching(): void {
       }
       pendingProjects.add(proj)
 
-      if (debounceTimer) clearTimeout(debounceTimer)
+      if (debounceTimer) {
+        clearTimeout(debounceTimer)
+        const idx = activeDebounceTimers.indexOf(debounceTimer)
+        if (idx !== -1) activeDebounceTimers.splice(idx, 1)
+      }
       debounceTimer = setTimeout(async () => {
         debounceTimer = null
         const changed = [...pendingProjects]
@@ -520,6 +538,7 @@ function startWatching(): void {
 
         broadcastUpdate(changed)
       }, 500)
+      activeDebounceTimers.push(debounceTimer)
     }
 
     watcher.on('add', scheduleUpdate)
@@ -557,6 +576,31 @@ function ensureInitialScan(): Promise<void> {
     try { startWatching() } catch (err) { log.error('[usage] startWatching error', err) }
   }
   return initialScanPromise
+}
+
+/**
+ * Close all chokidar watchers, cancel pending debounce timers, and clear caches.
+ * Call on app quit to release file descriptors and prevent unbounded memory growth.
+ */
+export function disposeUsageWatchers(): void {
+  // Cancel pending debounce timers
+  for (const timer of activeDebounceTimers) {
+    clearTimeout(timer)
+  }
+  activeDebounceTimers.length = 0
+
+  // Close chokidar watchers (releases file descriptors)
+  for (const watcher of watchers) {
+    watcher.close().catch(() => { /* best-effort */ })
+  }
+  watchers.length = 0
+
+  // Clear caches to release memory
+  fileCache.clear()
+  fileCwdCache.clear()
+
+  watchingStarted = false
+  initialScanPromise = null
 }
 
 export function registerUsageHandlers(): void {

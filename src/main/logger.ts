@@ -14,8 +14,9 @@ log.transports.file.level = 'info'
 log.transports.file.maxSize = 5 * 1024 * 1024 // 5MB per file
 log.transports.file.format = '[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] {text}'
 
-// Console transport: verbose in dev, quiet in prod
-log.transports.console.level = process.env.NODE_ENV === 'development' ? 'debug' : 'warn'
+// Console transport: verbose in dev, disabled in prod. Packaged macOS apps
+// launched from Finder have no attached stdout/stderr, so writes throw EIO.
+log.transports.console.level = process.env.NODE_ENV === 'development' ? 'debug' : false
 
 // Catch uncaughtException + unhandledRejection globally
 log.errorHandler.startCatching()

@@ -2,7 +2,7 @@ import log from './logger'
 import { app, BrowserWindow, ipcMain, dialog, shell, nativeImage, screen, webContents, session } from 'electron'
 import fs from 'fs'
 import path from 'path'
-import { SHELL_SHOW_IN_FOLDER, HTTP_FETCH, WEBVIEW_SCREENSHOT, NATIVE_FILE_DRAG, CAPTURE_PAGE, DIALOG_OPEN_FOLDER, DIALOG_SAVE_FILE, DIALOG_CONFIRM_UNSAVED, DIALOG_CONFIRM_CLOSE_CANVAS, CRASH_REPORT_SAVE } from '../shared/ipc-channels'
+import { SHELL_SHOW_IN_FOLDER, HTTP_FETCH, WEBVIEW_SCREENSHOT, NATIVE_FILE_DRAG, CAPTURE_PAGE, DIALOG_OPEN_FOLDER, DIALOG_SAVE_FILE, DIALOG_CONFIRM_UNSAVED, DIALOG_CONFIRM_CLOSE_CANVAS, CRASH_REPORT_SAVE, APP_OPEN_PATH } from '../shared/ipc-channels'
 import {
   WINDOW_CREATE, WINDOW_GET_ID, WINDOW_GET_TYPE, WINDOW_SET_TITLE,
   PANEL_TRANSFER, PANEL_RECEIVE, PANEL_TRANSFER_ACK,
@@ -27,13 +27,15 @@ import { writeDragTempFile, cleanupDragTempFile, createDragGhostImage } from './
 import { registerWindow, getWindowType, sendToWindow, broadcastToAll, broadcastToAllExcept, setPanelWindowMeta, setPanelWindowTerminalPtyId, listPanelWindows, getWindow, setDockWindowState, listDockWindows } from './windowRegistry'
 import { registerWorkspaceHandlers } from './workspaceManager'
 import { registerUsageHandlers, disposeUsageWatchers } from './ipc/usage'
-import { addAllowedRoot, validatePath } from './ipc/pathValidation'
+import { addAllowedRoot, clearScopedWriteAllowancesForWindow, registerScopedWriteAllowance, validatePath } from './ipc/pathValidation'
 import { buildApplicationMenu, rebuildApplicationMenu, setNewMainWindowFn } from './menu'
 import { initShellEnv } from './shellEnv'
 import { initAutoUpdater } from './auto-updater'
 import { saveCrashReport, checkPendingCrashReport } from './crashReporter'
 import { beginTerminalTransfer, acknowledgeTerminalTransfer } from './ipc/terminal'
 import type { CateWindowParams, DockWindowInitPayload, PanelState, PanelTransferSnapshot, WindowDockState } from '../shared/types'
+import { disableRendererSandbox, disableTrustScoping } from './featureFlags'
+import { installWebContentsSecurity } from './webSecurity'
 
 /** True when any existing Cate BrowserWindow is in macOS native fullscreen.
  *  Used to reject window-creation IPCs so the app can never "escape" into a
@@ -44,6 +46,23 @@ function anyWindowFullscreen(): boolean {
     try { if (w.isFullScreen()) return true } catch { /* noop */ }
   }
   return false
+}
+
+async function runSmokeAssertions(win: BrowserWindow): Promise<void> {
+  const result = await win.webContents.executeJavaScript(`
+    new Promise((resolve) => {
+      setTimeout(() => {
+        resolve({
+          hasElectronAPI: typeof window.electronAPI === 'object',
+          hasFullscreenCheck: typeof window.electronAPI?.isMainWindowFullscreen === 'function',
+        })
+      }, 1200)
+    })
+  `, true) as { hasElectronAPI?: boolean; hasFullscreenCheck?: boolean }
+
+  if (!result?.hasElectronAPI || !result?.hasFullscreenCheck) {
+    throw new Error('Smoke test failed: preload bridge did not initialize correctly')
+  }
 }
 
 function createWindow(params?: CateWindowParams): BrowserWindow {
@@ -82,6 +101,8 @@ function createWindow(params?: CateWindowParams): BrowserWindow {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: !disableRendererSandbox(),
+      webSecurity: true,
       webviewTag: true,
     },
   })
@@ -118,6 +139,7 @@ function createWindow(params?: CateWindowParams): BrowserWindow {
     stopWatchersForWindow(windowId)
     unregisterTerminalsForWindow(windowId)
     stopMonitorsForWindow(windowId)
+    clearScopedWriteAllowancesForWindow(windowId)
     // Rebuild menu to update panel/dock window list
     if (isPanel || isDock) rebuildApplicationMenu()
     // Trigger immediate session save from main window when a child window closes
@@ -335,11 +357,16 @@ function registerAllHandlers(): void {
   })
 
   ipcMain.handle(DIALOG_SAVE_FILE, async (_event, options: { defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }) => {
+    const callerWin = BrowserWindow.fromWebContents(_event.sender)
+    if (callerWin) clearScopedWriteAllowancesForWindow(callerWin.id)
     const result = await dialog.showSaveDialog({
       defaultPath: options.defaultPath,
       filters: options.filters || [{ name: 'JSON', extensions: ['json'] }],
     })
     if (result.canceled || !result.filePath) return null
+    if (callerWin) {
+      await registerScopedWriteAllowance(callerWin.id, result.filePath)
+    }
     return result.filePath
   })
 
@@ -824,6 +851,56 @@ if (!app.isPackaged) {
   app.setPath('userData', path.join(app.getPath('userData'), 'Dev'))
 }
 
+// ---------------------------------------------------------------------------
+// Dock / "Open With..." folder opens (macOS `open-file` event)
+//
+// Fires when the user drops a folder onto the dock icon or opens one with
+// Cate via Finder. We resolve the folder to a directory and forward it to
+// the main renderer, which creates a new workspace rooted at that path.
+//
+// The event can fire *before* the window is ready, so we queue paths and
+// flush once the main window signals ready-to-show.
+// ---------------------------------------------------------------------------
+
+const pendingOpenPaths: string[] = []
+let mainWindowReady = false
+
+function findMainWindow(): BrowserWindow | null {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w.isDestroyed()) continue
+    if (getWindowType(w.id) === 'main') return w
+  }
+  return null
+}
+
+function deliverOpenPath(p: string): void {
+  const win = findMainWindow()
+  if (!win || !mainWindowReady) {
+    pendingOpenPaths.push(p)
+    return
+  }
+  try {
+    if (win.isMinimized()) win.restore()
+    win.focus()
+  } catch { /* noop */ }
+  win.webContents.send(APP_OPEN_PATH, p)
+}
+
+function flushPendingOpenPaths(): void {
+  if (!pendingOpenPaths.length) return
+  const win = findMainWindow()
+  if (!win) return
+  for (const p of pendingOpenPaths.splice(0)) {
+    win.webContents.send(APP_OPEN_PATH, p)
+  }
+}
+
+app.on('open-file', (event, filePath) => {
+  event.preventDefault()
+  log.info('open-file event: %s', filePath)
+  deliverOpenPath(filePath)
+})
+
 // Build application menu
 buildApplicationMenu()
 
@@ -881,10 +958,6 @@ app.whenReady().then(async () => {
   await initShellEnv()
   log.info('Shell environment resolved')
 
-  // Register the user's home directory as an allowed root so workspace paths
-  // under ~ are accessible. The Desktop is also allowed for screenshot saves.
-  addAllowedRoot(app.getPath('home'))
-
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     const origin = details.url
     if (origin.startsWith('file://') || (process.env.ELECTRON_RENDERER_URL && origin.startsWith(process.env.ELECTRON_RENDERER_URL))) {
@@ -901,11 +974,17 @@ app.whenReady().then(async () => {
     }
   })
 
+  installWebContentsSecurity()
   registerAllHandlers()
   log.info('IPC handlers registered')
 
   const mainWin = createWindow({ type: 'main' })
   log.info('Main window created (id=%d)', mainWin.id)
+
+  if (disableTrustScoping()) {
+    addAllowedRoot(app.getPath('home'))
+    log.warn('[security] Trust scoping disabled via dev-only flag; home directory restored to allowed roots')
+  }
 
   initAutoUpdater()
 
@@ -913,7 +992,17 @@ app.whenReady().then(async () => {
   // dialog if one exists. Deferred until after the window is ready so the
   // dialog has a parent window and doesn't block startup.
   mainWin.once('ready-to-show', () => {
+    mainWindowReady = true
+    flushPendingOpenPaths()
     checkPendingCrashReport().catch((err) => log.warn('Crash report check failed:', err))
+    if (process.env.CATE_SMOKE_TEST === '1') {
+      runSmokeAssertions(mainWin)
+        .then(() => app.exit(0))
+        .catch((err) => {
+          log.error('[smoke] %O', err)
+          app.exit(1)
+        })
+    }
   })
 })
 
@@ -924,7 +1013,12 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow({ type: 'main' })
+    mainWindowReady = false
+    const win = createWindow({ type: 'main' })
+    win.once('ready-to-show', () => {
+      mainWindowReady = true
+      flushPendingOpenPaths()
+    })
   }
 })
 
@@ -1009,4 +1103,3 @@ app.on('will-quit', () => {
   // disposal, process group kills) is already done above.
   ;(process as unknown as { reallyExit(code: number): never }).reallyExit(0)
 })
-

@@ -26,12 +26,14 @@ import {
 } from '../shared/ipc-channels'
 import { DEFAULT_SETTINGS } from '../shared/types'
 import type { AppSettings, SessionSnapshot, MultiWorkspaceSession } from '../shared/types'
+import { addAllowedRoot } from './ipc/pathValidation'
+import { hydrateSessionTrust } from './sessionTrust'
+import { resolveTrustedWorkspaceRoot } from './workspaceRoots'
 
 // ---------------------------------------------------------------------------
 // Settings schema: expected key → expected typeof value (or 'array')
 // ---------------------------------------------------------------------------
 const SETTINGS_SCHEMA: Record<keyof AppSettings, string> = {
-  restoreSessionOnLaunch: 'boolean',
   defaultShellPath: 'string',
   warnBeforeQuit: 'boolean',
   nativeTabs: 'boolean',
@@ -290,12 +292,17 @@ export function registerHandlers(): void {
     for (const candidate of candidates) {
       const result = await tryLoadSession(candidate.path)
       if (result) {
+        const { sanitizedSession, acceptedRoots } = await hydrateSessionTrust(
+          result as SessionSnapshot | MultiWorkspaceSession,
+          resolveTrustedWorkspaceRoot,
+        )
+        for (const root of acceptedRoots) addAllowedRoot(root)
         if (candidate.path !== sessionPath) {
           log.warn('Recovered session from %s', candidate.label)
         } else {
           log.debug('Session loaded from %s', sessionPath)
         }
-        return result as SessionSnapshot
+        return sanitizedSession as SessionSnapshot
       }
     }
 

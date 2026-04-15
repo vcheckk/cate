@@ -1,15 +1,13 @@
 // =============================================================================
 // Auto-updater — checks for new releases on GitHub and installs updates.
-// Uses electron-updater natively; falls back to GitHub Releases API + manual
-// download when native updating fails (e.g. unsigned builds).
+// Uses electron-updater natively; when the native updater is unavailable, the
+// fallback path only performs version discovery and manual release-page routing.
+// It intentionally does not mount, spawn, or replace downloaded assets unless
+// a verified installer path is added in the future.
 // =============================================================================
 
 import { app, dialog, BrowserWindow, shell, ipcMain } from 'electron'
 import { autoUpdater } from 'electron-updater'
-import { execFile, spawn } from 'child_process'
-import fs from 'fs'
-import path from 'path'
-import os from 'os'
 import log from './logger'
 import { flushAllLoggers } from './ipc/terminal'
 import { SESSION_FLUSH_SAVE, SESSION_FLUSH_SAVE_DONE } from '../shared/ipc-channels'
@@ -72,21 +70,6 @@ function compareSemver(a: string, b: string): number {
   return 0
 }
 
-/** Return the expected release-asset filename for this platform + arch. */
-function getAssetName(version: string): string | null {
-  const v = version.replace(/^v/, '')
-  switch (process.platform) {
-    case 'darwin':
-      return process.arch === 'arm64' ? `Cate-${v}-arm64.dmg` : `Cate-${v}.dmg`
-    case 'win32':
-      return `Cate-Setup-${v}.exe`
-    case 'linux':
-      return `Cate-${v}.AppImage`
-    default:
-      return null
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Native-updater dialog (shown when electron-updater finds an update)
 // ---------------------------------------------------------------------------
@@ -109,163 +92,6 @@ function showUpdateDialog(info: { version: string }): void {
         autoUpdater.downloadUpdate()
       }
     })
-}
-
-// ---------------------------------------------------------------------------
-// Progress window for fallback downloads
-// ---------------------------------------------------------------------------
-
-function createProgressWindow(): BrowserWindow {
-  const win = new BrowserWindow({
-    width: 380,
-    height: 120,
-    resizable: false,
-    minimizable: false,
-    maximizable: false,
-    frame: false,
-    show: false,
-    alwaysOnTop: true,
-    backgroundColor: '#1f1e1c',
-    webPreferences: { contextIsolation: true },
-  })
-
-  const html = `<!DOCTYPE html>
-<html><head><style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-         background: #1f1e1c; color: #e0e0e0; padding: 24px; display: flex;
-         flex-direction: column; justify-content: center; height: 100vh;
-         -webkit-app-region: drag; }
-  .label { font-size: 13px; margin-bottom: 12px; }
-  .track { width: 100%; height: 6px; background: #333; border-radius: 3px; overflow: hidden; }
-  .bar   { height: 100%; width: 0%; background: #6C8EEF; border-radius: 3px;
-            transition: width .2s ease; }
-</style></head><body>
-  <div class="label" id="label">Downloading update…</div>
-  <div class="track"><div class="bar" id="bar"></div></div>
-</body></html>`
-
-  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
-  win.once('ready-to-show', () => win.show())
-  return win
-}
-
-function setProgress(win: BrowserWindow, pct: number): void {
-  if (win.isDestroyed()) return
-  const js = `document.getElementById('bar').style.width='${Math.round(pct)}%';`
-    + `document.getElementById('label').textContent='Downloading update… ${Math.round(pct)}%';`
-  win.webContents.executeJavaScript(js).catch(() => {})
-}
-
-function setStatus(win: BrowserWindow, text: string, indeterminate = false): void {
-  if (win.isDestroyed()) return
-  const bar = indeterminate ? '100' : null
-  const js =
-    (bar ? `document.getElementById('bar').style.width='${bar}%';` : '') +
-    `document.getElementById('label').textContent=${JSON.stringify(text)};`
-  win.webContents.executeJavaScript(js).catch(() => {})
-}
-
-// ---------------------------------------------------------------------------
-// Download helper
-// ---------------------------------------------------------------------------
-
-async function downloadFile(
-  url: string,
-  dest: string,
-  onProgress?: (pct: number) => void,
-): Promise<void> {
-  const res = await fetch(url, {
-    headers: { 'User-Agent': `Cate/${app.getVersion()}`, Accept: 'application/octet-stream' },
-    redirect: 'follow',
-  })
-  if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`)
-  if (!res.body) throw new Error('Download failed: no response body')
-
-  const total = Number(res.headers.get('content-length')) || 0
-  let received = 0
-  const fileStream = fs.createWriteStream(dest)
-
-  const reader = res.body.getReader()
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    fileStream.write(Buffer.from(value))
-    received += value.byteLength
-    if (total > 0 && onProgress) onProgress((received / total) * 100)
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    fileStream.on('finish', resolve)
-    fileStream.on('error', reject)
-    fileStream.end()
-  })
-}
-
-// ---------------------------------------------------------------------------
-// Platform-specific install
-// ---------------------------------------------------------------------------
-
-function exec(cmd: string, args: string[], timeoutMs = 10 * 60 * 1000): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
-      if (err) reject(err)
-      else resolve(stdout.trim())
-    })
-  })
-}
-
-async function installMacOS(dmgPath: string): Promise<void> {
-  // Mount DMG
-  const out = await exec('hdiutil', ['attach', '-nobrowse', '-readonly', dmgPath])
-  // Parse mount point from hdiutil output (last column of last line)
-  const mountLine = out.split('\n').pop() || ''
-  const mountPoint = mountLine.replace(/^.*\t/, '').trim()
-  if (!mountPoint) throw new Error('Could not determine DMG mount point')
-
-  try {
-    // Find the .app inside the mounted DMG
-    const entries = fs.readdirSync(mountPoint)
-    const appName = entries.find((e) => e.endsWith('.app'))
-    if (!appName) throw new Error('No .app found in DMG')
-
-    const src = path.join(mountPoint, appName)
-    const dest = path.join('/Applications', appName)
-
-    // Remove old version, copy new
-    if (fs.existsSync(dest)) {
-      await exec('rm', ['-rf', dest])
-    }
-    await exec('cp', ['-R', src, dest])
-    log.info('[fallback-updater] Installed %s to /Applications', appName)
-  } finally {
-    await exec('hdiutil', ['detach', mountPoint, '-quiet']).catch(() => {})
-  }
-
-  // Flush session before relaunch so workspace state survives the update
-  await flushSessionBeforeUpdate()
-
-  // Relaunch from new location
-  app.relaunch({ execPath: '/Applications/Cate.app/Contents/MacOS/Cate' })
-  app.quit()
-}
-
-async function installWindows(exePath: string): Promise<void> {
-  await flushSessionBeforeUpdate()
-  // Launch NSIS installer — it handles uninstalling the old version
-  spawn(exePath, [], { detached: true, stdio: 'ignore' }).unref()
-  app.quit()
-}
-
-async function installLinux(appImagePath: string): Promise<void> {
-  const currentPath = process.execPath
-  fs.copyFileSync(appImagePath, currentPath)
-  fs.chmodSync(currentPath, 0o755)
-  log.info('[fallback-updater] Replaced AppImage at %s', currentPath)
-  await flushSessionBeforeUpdate()
-  app.relaunch()
-  app.quit()
 }
 
 // ---------------------------------------------------------------------------
@@ -313,72 +139,21 @@ async function fallbackCheckForUpdate(manual: boolean): Promise<void> {
       return
     }
 
-    // A newer version exists — find the right asset
-    const assetName = getAssetName(latestVersion)
-    const asset = assetName ? data.assets.find((a) => a.name === assetName) : null
-
-    if (!asset) {
-      log.warn('[fallback-updater] No matching asset found for %s on %s/%s', latestVersion, process.platform, process.arch)
-      // Fall back to opening the releases page
-      const win = BrowserWindow.getFocusedWindow()
-      const { response } = await dialog.showMessageBox({
-        ...(win ? { parentWindow: win } : {}),
-        type: 'info',
-        title: 'Update Available',
-        message: `Cate ${latestVersion} is available (you have v${currentVersion}).`,
-        detail: 'Could not find an automatic download for your platform. Open the releases page?',
-        buttons: ['Open Releases Page', 'Later'],
-        defaultId: 0,
-        cancelId: 1,
-      })
-      if (response === 0) shell.openExternal(data.html_url)
-      return
-    }
-
-    // Ask user to confirm download
+    // Native fallback intentionally avoids installing downloaded binaries until
+    // a verified installer path exists.
     const parentWin = BrowserWindow.getFocusedWindow()
     const { response } = await dialog.showMessageBox({
       ...(parentWin ? { parentWindow: parentWin } : {}),
       type: 'info',
       title: 'Update Available',
       message: `Cate ${latestVersion} is available (you have v${currentVersion}).`,
-      detail: 'Download and install the update? The app will restart when complete.',
-      buttons: ['Update Now', 'Later'],
+      detail: 'Automatic installation is unavailable in this build. Open the release page to download the verified installer manually?',
+      buttons: ['Open Release Page', 'Later'],
       defaultId: 0,
       cancelId: 1,
     })
     if (response !== 0) return
-
-    // Download with progress
-    const tmpDir = app.getPath('temp')
-    const destPath = path.join(tmpDir, asset.name)
-
-    const progressWin = createProgressWindow()
-    try {
-      await downloadFile(asset.browser_download_url, destPath, (pct) => {
-        setProgress(progressWin, pct)
-      })
-
-      log.info('[fallback-updater] Downloaded %s', destPath)
-      setStatus(progressWin, 'Installing update…', true)
-
-      // Install per platform
-      switch (process.platform) {
-        case 'darwin':
-          await installMacOS(destPath)
-          break
-        case 'win32':
-          await installWindows(destPath)
-          break
-        case 'linux':
-          await installLinux(destPath)
-          break
-        default:
-          shell.openExternal(data.html_url)
-      }
-    } finally {
-      if (!progressWin.isDestroyed()) progressWin.destroy()
-    }
+    shell.openExternal(data.html_url)
   } catch (err: any) {
     log.error('[fallback-updater] Error:', err)
     if (manual) {

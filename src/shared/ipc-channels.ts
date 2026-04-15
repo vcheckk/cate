@@ -25,6 +25,7 @@ export const FS_STAT = 'fs:stat'
 export const FS_DELETE = 'fs:delete'
 export const FS_RENAME = 'fs:rename'
 export const FS_MKDIR = 'fs:mkdir'
+export const FS_SEARCH = 'fs:search'
 
 // Shell utilities
 export const SHELL_SHOW_IN_FOLDER = 'shell:showInFolder'
@@ -81,6 +82,9 @@ export const SESSION_FLUSH_SAVE_DONE = 'session:flushSaveDone' // renderer -> ma
 
 // App
 export const APP_GET_PATH = 'app:getPath'
+/** Main -> renderer: user dropped a folder on the dock icon (or opened one
+ *  via OS "Open With..."). Renderer opens it as a new workspace. */
+export const APP_OPEN_PATH = 'app:openPath'
 
 // Crash reporting
 export const CRASH_REPORT_SAVE = 'crash:reportSave'

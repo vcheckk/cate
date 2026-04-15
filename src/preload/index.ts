@@ -56,6 +56,7 @@ import {
   SESSION_FLUSH_SAVE,
   SESSION_FLUSH_SAVE_DONE,
   APP_GET_PATH,
+  APP_OPEN_PATH,
   CRASH_REPORT_SAVE,
   MENU_OPEN_SETTINGS,
   MENU_TRIGGER_ACTION,
@@ -74,6 +75,7 @@ import {
   FS_DELETE,
   FS_RENAME,
   FS_MKDIR,
+  FS_SEARCH,
   SHELL_SHOW_IN_FOLDER,
   HTTP_FETCH,
   MCP_SPAWN,
@@ -221,6 +223,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   fsReadDir(dirPath: string): Promise<unknown[]> {
     return ipcRenderer.invoke(FS_READ_DIR, dirPath)
+  },
+
+  fsSearch(rootPath: string, query: string, options?: unknown): Promise<unknown[]> {
+    return ipcRenderer.invoke(FS_SEARCH, rootPath, query, options)
   },
 
   fsWatchStart(dirPath: string): Promise<void> {
@@ -473,6 +479,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   appGetPath(name: string): Promise<string> {
     return ipcRenderer.invoke(APP_GET_PATH, name)
+  },
+
+  onOpenPath(callback: (filePath: string) => void): () => void {
+    const listener = (_event: Electron.IpcRendererEvent, filePath: string): void => {
+      callback(filePath)
+    }
+    ipcRenderer.on(APP_OPEN_PATH, listener)
+    return () => { ipcRenderer.removeListener(APP_OPEN_PATH, listener) }
   },
 
   // ---------------------------------------------------------------------------

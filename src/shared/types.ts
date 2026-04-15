@@ -163,6 +163,15 @@ export interface WorkspaceInfo {
   rootPath: string
 }
 
+export interface WorkspaceMutationError {
+  code: 'INVALID_ROOT_PATH' | 'INVALID_WORKSPACE_ID' | 'WORKSPACE_NOT_FOUND'
+  message: string
+}
+
+export type WorkspaceMutationResult =
+  | { ok: true; workspace: WorkspaceInfo }
+  | { ok: false; error: WorkspaceMutationError }
+
 // -----------------------------------------------------------------------------
 // Window type system — main window vs borderless panel windows (Phase 4)
 // -----------------------------------------------------------------------------
@@ -306,6 +315,8 @@ export interface WorkspaceState {
   name: string
   color: string
   rootPath: string
+  rootPathError?: string | null
+  isRootPathPending?: boolean
   panels: Record<string, PanelState>
   // Primary canvas state (current behavior)
   canvasNodes: Record<CanvasNodeId, CanvasNodeState>
@@ -553,6 +564,27 @@ export interface FileTreeNode {
   fileExtension: string
 }
 
+export interface FileSearchResult {
+  name: string
+  path: string
+  /** Path relative to the search root, with forward slashes. */
+  relativePath: string
+  isDirectory: boolean
+  /** True when the entry's name itself matched the query. */
+  nameMatch: boolean
+  /** First line of the file containing the query (only set for content matches). */
+  contentPreview?: string
+  /** 1-based line number of the first content match. */
+  contentLine?: number
+}
+
+export interface FileSearchOptions {
+  /** Hard cap on the number of results returned (default 200). */
+  maxResults?: number
+  /** Skip files larger than this many bytes for content search (default 1 MB). */
+  maxFileBytes?: number
+}
+
 // -----------------------------------------------------------------------------
 // Session persistence
 // -----------------------------------------------------------------------------
@@ -643,7 +675,6 @@ export type NotificationAction =
 
 export interface AppSettings {
   // General
-  restoreSessionOnLaunch: boolean
   defaultShellPath: string
   warnBeforeQuit: boolean
   /** macOS only: enable native window tabs (tabbingIdentifier on main windows).
@@ -690,7 +721,6 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   // General
-  restoreSessionOnLaunch: true,
   defaultShellPath: '/bin/zsh',
   warnBeforeQuit: false,
   nativeTabs: true,

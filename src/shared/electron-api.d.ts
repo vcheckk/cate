@@ -2,7 +2,7 @@
 // Type declaration for window.electronAPI exposed via contextBridge
 // =============================================================================
 
-import type { AppSettings, AgentState, CateWindowParams, DockWindowInitPayload, DetachedDockWindowSnapshot, DockStateSnapshot, FileTreeNode, GitInfo, NotificationAction, PanelState, PanelTransferSnapshot, PanelWindowSnapshot, Point, ProjectUsage, SessionSnapshot, TerminalActivity, UsageSummary, WorkspaceInfo } from './types'
+import type { AppSettings, AgentState, CateWindowParams, DockWindowInitPayload, DetachedDockWindowSnapshot, DockStateSnapshot, FileSearchOptions, FileSearchResult, FileTreeNode, GitInfo, NotificationAction, PanelState, PanelTransferSnapshot, PanelWindowSnapshot, Point, ProjectUsage, SessionSnapshot, TerminalActivity, UsageSummary, WorkspaceInfo, WorkspaceMutationResult } from './types'
 
 export interface NativeContextMenuItem {
   id?: string
@@ -65,6 +65,9 @@ export interface ElectronAPI {
 
   /** Read a directory and return FileTreeNode entries. */
   fsReadDir(dirPath: string): Promise<FileTreeNode[]>
+
+  /** Search for files by name and content (flat result list). */
+  fsSearch(rootPath: string, query: string, options?: FileSearchOptions): Promise<FileSearchResult[]>
 
   /** Start watching a directory for changes. */
   fsWatchStart(dirPath: string): Promise<void>
@@ -245,6 +248,11 @@ export interface ElectronAPI {
 
   /** Get a well-known application path (e.g. 'userData', 'home'). */
   appGetPath(name: string): Promise<string>
+
+  /** Subscribe to folder/file paths forwarded from the OS — e.g. the user
+   *  dropped a folder on the dock icon or opened one via "Open With Cate".
+   *  Returns an unsubscribe function. */
+  onOpenPath(callback: (filePath: string) => void): () => void
 
   // ---------------------------------------------------------------------------
   // Crash reporting
@@ -437,11 +445,11 @@ export interface ElectronAPI {
   /** List all workspace metadata from the main process. */
   workspaceList(): Promise<WorkspaceInfo[]>
 
-  /** Create a new workspace in the main process. Returns the created WorkspaceInfo. */
-  workspaceCreate(options?: { name?: string; rootPath?: string; id?: string }): Promise<WorkspaceInfo>
+  /** Create a new workspace in the main process. */
+  workspaceCreate(options?: { name?: string; rootPath?: string; id?: string }): Promise<WorkspaceMutationResult>
 
-  /** Update workspace metadata in the main process. Returns the updated WorkspaceInfo. */
-  workspaceUpdate(id: string, changes: Partial<Omit<WorkspaceInfo, 'id'>>): Promise<WorkspaceInfo | null>
+  /** Update workspace metadata in the main process. */
+  workspaceUpdate(id: string, changes: Partial<Omit<WorkspaceInfo, 'id'>>): Promise<WorkspaceMutationResult>
 
   /** Remove a workspace from the main process. Returns true if removed. */
   workspaceRemove(id: string): Promise<boolean>

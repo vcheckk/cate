@@ -39,4 +39,11 @@ jobs:
         run: npm run build
 
       - name: Typecheck
-        run: npx tsc --noEmit
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Electron smoke test (macOS only)
+        if: matrix.os == 'macos-latest'
+        run: npm run test:smoke:electron

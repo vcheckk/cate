@@ -1,6 +1,6 @@
 {
   "name": "cate",
-  "version": "0.2.17",
+  "version": "0.2.18",
   "productName": "Cate",
   "description": "An infinite zoomable canvas IDE",
   "license": "MIT",
@@ -17,11 +17,18 @@
     "email": "hello@0-ai.org"
   },
   "main": "dist/main/index.js",
+  "engines": {
+    "node": ">=20 <23"
+  },
   "scripts": {
     "postinstall": "bash scripts/patch-electron-name.sh",
     "predev": "bash scripts/patch-electron-name.sh",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:smoke:electron": "node scripts/run-electron-smoke.mjs",
     "preview": "electron-vite preview",
     "icons": "node scripts/generate-icons.js",
     "package": "npm run icons && electron-vite build && electron-builder",
@@ -60,6 +67,7 @@
     "postcss": "^8.4.0",
     "sharp": "^0.33.0",
     "tailwindcss": "^3.4.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
   }
 }

@@ -243,12 +243,6 @@ export function GlobalSearch() {
     return () => document.removeEventListener('keydown', handleKeyDown, { capture: true })
   }, [show, results, selectedIndex, close, selectResult])
 
-  const sectionLabel = useMemo(() => ({
-    panel: 'Open Panels',
-    terminal: 'Terminal Output',
-    file: 'Workspace Files',
-  } as Record<ResultKind, string>), [])
-
   // Group results by kind for rendering while preserving global order.
   const grouped = useMemo(() => {
     const seen = new Set<ResultKind>()
@@ -265,7 +259,7 @@ export function GlobalSearch() {
   let flatIndex = 0
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-black/40"
+      className="fixed inset-0 z-50 flex items-start justify-center pt-40 bg-black/40"
       onClick={close}
     >
       <div
@@ -289,9 +283,6 @@ export function GlobalSearch() {
             {grouped.map((section, si) => (
               <div key={section.kind}>
                 {si > 0 && <div className="mx-5 my-1 border-t border-white/10" />}
-                <div className="px-5 pt-2 pb-1 text-[10px] uppercase tracking-wider text-muted font-semibold">
-                  {sectionLabel[section.kind]}
-                </div>
                 {section.items.map((r) => {
                   const thisIndex = flatIndex++
                   const isSelected = thisIndex === selectedIndex
@@ -331,7 +322,7 @@ export function GlobalSearch() {
 // -----------------------------------------------------------------------------
 
 function ResultIcon({ result }: { result: SearchResult }) {
-  const tile = 'w-8 h-8 rounded-md flex items-center justify-center shrink-0'
+  const tile = 'w-8 h-8 rounded-full flex items-center justify-center shrink-0'
   if (result.kind === 'file') {
     return <div className={`${tile} bg-amber-500/15 text-amber-400`}><FileText size={16} weight="bold" /></div>
   }

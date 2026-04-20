@@ -5,6 +5,7 @@
 // =============================================================================
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react'
+import { MagnifyingGlass } from '@phosphor-icons/react'
 import { useUIStore } from '../stores/uiStore'
 import { useAppStore } from '../stores/appStore'
 import { useCanvasStoreApi } from '../stores/CanvasStoreContext'
@@ -265,16 +266,17 @@ export function GlobalSearch() {
       onClick={close}
     >
       <div
-        className="w-[640px] max-h-[520px] rounded-xl overflow-hidden flex flex-col bg-surface-4 border border-subtle"
+        className="w-[640px] max-h-[520px] rounded-2xl overflow-hidden flex flex-col bg-surface-4/85 backdrop-blur-xl border border-subtle shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="p-3">
+        <div className="flex items-center gap-3 px-4 h-12">
+          <MagnifyingGlass size={18} className="text-muted shrink-0" />
           <input
             autoFocus
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="w-full bg-surface-3 text-primary text-sm px-3 py-2 rounded-lg border border-subtle outline-none focus:border-blue-500/50"
+            className="flex-1 bg-transparent text-primary text-base outline-none placeholder:text-muted"
             placeholder="Search files, terminals, panels…"
           />
         </div>

@@ -175,54 +175,11 @@ export const CommandPalette: React.FC = () => {
         action: () => canvasApi.getState().addRegion('Region', { x: 200, y: 200 }, { width: 400, height: 300 }),
       },
       {
-        id: 'saveLayout',
-        title: 'Save Layout As...',
+        id: 'manageLayouts',
+        title: 'Saved Layouts…',
         shortcutText: '',
         icon: <SaveIcon />,
-        action: async () => {
-          const name = window.prompt('Layout name:')
-          if (!name?.trim()) return
-          const state = canvasApi.getState()
-          const appState = useAppStore.getState()
-          const workspace = appState.workspaces.find((w) => w.id === appState.selectedWorkspaceId)
-          const snapshot = {
-            nodes: Object.values(state.nodes).map((n) => {
-              const panel = workspace?.panels[n.panelId]
-              return { panelType: panel?.type ?? 'terminal', origin: n.origin, size: n.size }
-            }),
-            regions: Object.values(state.regions).map((r) => ({
-              origin: r.origin, size: r.size, label: r.label, color: r.color,
-            })),
-          }
-          await window.electronAPI.layoutSave(name.trim(), snapshot)
-        },
-      },
-      {
-        id: 'loadLayout',
-        title: 'Load Layout...',
-        shortcutText: '',
-        icon: <DownloadIcon />,
-        action: async () => {
-          const names = await window.electronAPI.layoutList()
-          if (names.length === 0) { alert('No saved layouts'); return }
-          const name = window.prompt('Available layouts:\n' + names.join('\n') + '\n\nEnter name:')
-          if (!name?.trim()) return
-          const snapshot = await window.electronAPI.layoutLoad(name.trim()) as any
-          if (!snapshot) { alert('Layout not found'); return }
-          const wsId = useAppStore.getState().selectedWorkspaceId
-          useAppStore.getState().closeAllPanels(wsId)
-          for (const node of snapshot.nodes || []) {
-            switch (node.panelType) {
-              case 'terminal': useAppStore.getState().createTerminal(wsId, undefined, node.origin); break
-              case 'editor': useAppStore.getState().createEditor(wsId, undefined, node.origin); break
-              case 'browser': useAppStore.getState().createBrowser(wsId, undefined, node.origin); break
-            }
-          }
-          for (const region of snapshot.regions || []) {
-            canvasApi.getState().addRegion(region.label, region.origin, region.size, region.color)
-          }
-          canvasApi.getState().zoomToFit()
-        },
+        action: () => useUIStore.getState().setShowLayoutsDialog(true),
       },
       {
         id: 'exportWorkspace',

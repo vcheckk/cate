@@ -136,6 +136,9 @@ export async function saveSession(): Promise<void> {
         filePath: panel?.filePath ?? undefined,
         url: panel?.url ?? undefined,
         regionId: node.regionId ?? undefined,
+        unsavedContent: panel?.type === 'editor' && !panel?.filePath
+          ? panel?.unsavedContent
+          : undefined,
       }
     })
 
@@ -363,6 +366,9 @@ export async function restoreSession(snapshot: SessionSnapshot, canvasStoreApi?:
       }
       case 'editor': {
         const panelId = appStore.createEditor(wsId, nodeSnap.filePath ?? undefined)
+        if (!nodeSnap.filePath && nodeSnap.unsavedContent) {
+          appStore.setPanelUnsavedContent(wsId, panelId, nodeSnap.unsavedContent)
+        }
         const canvasState = getCanvasState()
         if (canvasState) {
           const newNodeId = canvasState.nodeForPanel(panelId)

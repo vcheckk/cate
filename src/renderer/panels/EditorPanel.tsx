@@ -516,11 +516,18 @@ export default function EditorPanel({
           })
       }
     } else {
-      const model = monaco.editor.createModel('', 'plaintext')
+      const restored = useAppStore.getState().workspaces
+        .find((w) => w.id === workspaceId)?.panels[panelId]?.unsavedContent ?? ''
+      const model = monaco.editor.createModel(restored, 'plaintext')
       createdModel = model
       editor.setModel(model)
+      if (restored) {
+        isDirtyRef.current = true
+        useAppStore.getState().setPanelDirty(workspaceId, panelId, true)
+      }
     }
 
+    let unsavedSaveTimer: ReturnType<typeof setTimeout> | null = null
     const changeDisposable = editor.onDidChangeModelContent(() => {
       if (!isDirtyRef.current) {
         isDirtyRef.current = true
@@ -533,12 +540,30 @@ export default function EditorPanel({
             .updatePanelTitle(workspaceId, panelId, `${fileName} \u2022`)
         }
       }
+
+      // Persist scratch-editor content to the store (debounced) so it
+      // survives canvas/workspace switches and app restarts.
+      if (!filePathRef.current) {
+        if (unsavedSaveTimer) clearTimeout(unsavedSaveTimer)
+        unsavedSaveTimer = setTimeout(() => {
+          const value = editor.getModel()?.getValue() ?? ''
+          useAppStore.getState().setPanelUnsavedContent(workspaceId, panelId, value || undefined)
+        }, 300)
+      }
     })
 
     return () => {
       cancelled = true
       layoutObserver.disconnect()
       changeDisposable.dispose()
+      if (unsavedSaveTimer) {
+        clearTimeout(unsavedSaveTimer)
+        unsavedSaveTimer = null
+      }
+      if (!filePath) {
+        const value = editor.getModel()?.getValue() ?? ''
+        useAppStore.getState().setPanelUnsavedContent(workspaceId, panelId, value || undefined)
+      }
       if (filePath && modelRetained) {
         releaseModel(filePath)
       } else if (!filePath && createdModel && !createdModel.isDisposed()) {

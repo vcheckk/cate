@@ -271,6 +271,7 @@ interface AppStoreActions {
   updatePanelTitle: (workspaceId: string, panelId: string, title: string) => void
   updatePanelUrl: (workspaceId: string, panelId: string, url: string) => void
   setPanelDirty: (workspaceId: string, panelId: string, dirty: boolean) => void
+  setPanelUnsavedContent: (workspaceId: string, panelId: string, content: string | undefined) => void
   addPanel: (workspaceId: string, panel: PanelState) => void
 
   // Helpers
@@ -940,6 +941,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
         return {
           ...ws,
           panels: { ...ws.panels, [panelId]: { ...panel, isDirty: dirty } },
+        }
+      }),
+    }))
+  },
+
+  setPanelUnsavedContent(workspaceId, panelId, content) {
+    set((state) => ({
+      workspaces: state.workspaces.map((ws) => {
+        if (ws.id !== workspaceId) return ws
+        const panel = ws.panels[panelId]
+        if (!panel) return ws
+        return {
+          ...ws,
+          panels: { ...ws.panels, [panelId]: { ...panel, unsavedContent: content } },
         }
       }),
     }))

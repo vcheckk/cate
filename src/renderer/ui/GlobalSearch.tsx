@@ -1,24 +1,51 @@
 // =============================================================================
-// GlobalSearch — Overlay for searching across all open editor panels.
-// Triggered by the globalSearch shortcut (Cmd+Shift+H).
+// GlobalSearch — Canvas-wide search overlay.
+// Searches workspace files, terminal scrollback, and open panels.
+// Triggered by the globalSearch shortcut (Cmd+Shift+F).
 // =============================================================================
 
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import { useUIStore } from '../stores/uiStore'
 import { useAppStore } from '../stores/appStore'
 import { useCanvasStoreApi } from '../stores/CanvasStoreContext'
+import { useDockStore } from '../stores/dockStore'
+import { findTabStack } from '../stores/dockTreeUtils'
+import { terminalRegistry } from '../lib/terminalRegistry'
 
 // -----------------------------------------------------------------------------
 // Types
 // -----------------------------------------------------------------------------
 
-interface SearchResult {
-  filePath: string
-  panelId: string
-  nodeId: string
-  line: number
-  text: string
+type ResultKind = 'file' | 'panel' | 'terminal'
+
+interface BaseResult {
+  key: string
+  kind: ResultKind
+  primary: string
+  secondary: string
+  score: number
 }
+
+interface FileResult extends BaseResult {
+  kind: 'file'
+  filePath: string
+  line?: number
+}
+
+interface PanelResult extends BaseResult {
+  kind: 'panel'
+  panelId: string
+  nodeId?: string
+}
+
+interface TerminalResult extends BaseResult {
+  kind: 'terminal'
+  panelId: string
+  nodeId?: string
+  line: number
+}
+
+type SearchResult = FileResult | PanelResult | TerminalResult
 
 // -----------------------------------------------------------------------------
 // Component
@@ -30,6 +57,7 @@ export function GlobalSearch() {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [busy, setBusy] = useState(false)
 
   const close = useCallback(() => {
     useUIStore.getState().setShowGlobalSearch(false)
@@ -37,12 +65,12 @@ export function GlobalSearch() {
     setResults([])
   }, [])
 
-  // Search across open editor files
   const doSearch = useCallback(async (searchText: string) => {
     if (!searchText || searchText.length < 2) {
       setResults([])
       return
     }
+    const q = searchText.toLowerCase()
 
     const workspace = useAppStore.getState().workspaces.find(
       (w) => w.id === useAppStore.getState().selectedWorkspaceId,
@@ -50,65 +78,151 @@ export function GlobalSearch() {
     if (!workspace) return
 
     const canvasNodes = canvasApi.getState().nodes
-    const found: SearchResult[] = []
-
-    for (const [panelId, panel] of Object.entries(workspace.panels)) {
-      if (panel.type !== 'editor' || !panel.filePath) continue
-
-      try {
-        const content = await window.electronAPI.fsReadFile(panel.filePath)
-        const lines = content.split('\n')
-        const lowerQuery = searchText.toLowerCase()
-
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].toLowerCase().includes(lowerQuery)) {
-            const nodeId =
-              Object.values(canvasNodes).find((n) => n.panelId === panelId)?.id || ''
-            found.push({
-              filePath: panel.filePath,
-              panelId,
-              nodeId,
-              line: i + 1,
-              text: lines[i].trim(),
-            })
-            if (found.length >= 50) break
-          }
-        }
-      } catch {
-        /* file not readable */
-      }
-      if (found.length >= 50) break
+    const focusedNodeId = canvasApi.getState().focusedNodeId
+    const nodeByPanelId = new Map<string, { id: string; creationIndex: number }>()
+    for (const n of Object.values(canvasNodes)) {
+      nodeByPanelId.set(n.panelId, { id: n.id, creationIndex: n.creationIndex })
     }
 
-    setResults(found)
+    const out: SearchResult[] = []
+
+    // 1) Open panels (title + file path)
+    for (const panel of Object.values(workspace.panels)) {
+      const title = panel.title ?? ''
+      const fp = panel.filePath ?? ''
+      const url = panel.url ?? ''
+      const hay = `${title}\n${fp}\n${url}`.toLowerCase()
+      if (!hay.includes(q)) continue
+      const n = nodeByPanelId.get(panel.id)
+      // Recent-focus ranking: currently-focused panel first, then higher creationIndex.
+      const recency = n ? (focusedNodeId === n.id ? 1_000_000 : n.creationIndex) : 0
+      out.push({
+        key: `panel:${panel.id}`,
+        kind: 'panel',
+        primary: title || panel.type,
+        secondary: fp || url || panel.type,
+        score: 2000 + recency,
+        panelId: panel.id,
+        nodeId: n?.id,
+      })
+    }
+
+    // 2) Terminal scrollback
+    const terminalPanels = Object.values(workspace.panels).filter((p) => p.type === 'terminal')
+    for (const panel of terminalPanels) {
+      const entry = terminalRegistry.getEntry(panel.id)
+      if (!entry) continue
+      const buffer = entry.terminal.buffer.active
+      const last = buffer.baseY + buffer.cursorY
+      let matches = 0
+      for (let i = 0; i < last && matches < 5; i++) {
+        const line = buffer.getLine(i)
+        if (!line) continue
+        const text = line.translateToString(true)
+        if (text.toLowerCase().includes(q)) {
+          matches++
+          const n = nodeByPanelId.get(panel.id)
+          out.push({
+            key: `term:${panel.id}:${i}`,
+            kind: 'terminal',
+            primary: `${panel.title}:${i + 1}`,
+            secondary: text.trim().slice(0, 200),
+            score: 1000 + (n ? n.creationIndex : 0),
+            panelId: panel.id,
+            nodeId: n?.id,
+            line: i + 1,
+          })
+        }
+      }
+    }
+
+    // 3) Workspace files (names + content) via fsSearch
+    if (workspace.rootPath) {
+      try {
+        const hits = await window.electronAPI.fsSearch(workspace.rootPath, searchText, { maxResults: 50 })
+        for (const h of hits) {
+          if (h.isDirectory) continue
+          out.push({
+            key: `file:${h.path}${h.contentLine ?? ''}`,
+            kind: 'file',
+            primary: h.name + (h.contentLine ? `:${h.contentLine}` : ''),
+            secondary: h.contentPreview?.trim().slice(0, 200) || h.relativePath,
+            score: h.nameMatch ? 500 : 100,
+            filePath: h.path,
+            line: h.contentLine,
+          })
+        }
+      } catch {
+        /* filesystem search unavailable */
+      }
+    }
+
+    out.sort((a, b) => b.score - a.score)
+    setResults(out.slice(0, 80))
     setSelectedIndex(0)
-  }, [])
+  }, [canvasApi])
 
   // Debounced search
   useEffect(() => {
     if (!show) return
-    const timer = setTimeout(() => doSearch(query), 300)
-    return () => clearTimeout(timer)
+    setBusy(true)
+    const timer = setTimeout(async () => {
+      await doSearch(query)
+      setBusy(false)
+    }, 250)
+    return () => { clearTimeout(timer); setBusy(false) }
   }, [query, show, doSearch])
 
   const selectResult = useCallback(
-    (result: SearchResult) => {
-      if (result.nodeId) {
-        canvasApi.getState().focusAndCenter(result.nodeId)
+    async (result: SearchResult) => {
+      const appStore = useAppStore.getState()
+      const wsId = appStore.selectedWorkspaceId
+      if (result.kind === 'file') {
+        // Open in an editor panel. If an editor for this file already exists, focus it.
+        const ws = appStore.workspaces.find((w) => w.id === wsId)
+        let panelId: string | undefined
+        if (ws) {
+          const existing = Object.values(ws.panels).find(
+            (p) => p.type === 'editor' && p.filePath === result.filePath,
+          )
+          panelId = existing?.id
+        }
+        if (!panelId) {
+          panelId = appStore.createEditor(wsId, result.filePath)
+        }
+        const cs = canvasApi.getState()
+        const node = panelId ? Object.values(cs.nodes).find((n) => n.panelId === panelId) : undefined
+        if (node) cs.focusAndCenter(node.id)
+      } else if (result.kind === 'panel' || result.kind === 'terminal') {
+        if (result.nodeId) {
+          canvasApi.getState().focusAndCenter(result.nodeId)
+        } else {
+          // Dock panel — reveal in dock zone.
+          const dock = useDockStore.getState()
+          const loc = dock.getPanelLocation(result.panelId)
+          if (loc && loc.type === 'dock') {
+            const zone = dock.zones[loc.zone]
+            if (!zone.visible) dock.toggleZone(loc.zone)
+            if (zone.layout) {
+              const stack = findTabStack(zone.layout, loc.stackId)
+              if (stack) {
+                const idx = stack.panelIds.indexOf(result.panelId)
+                if (idx >= 0) dock.setActiveTab(loc.stackId, idx)
+              }
+            }
+          }
+        }
       }
       close()
     },
-    [close],
+    [canvasApi, close],
   )
 
   // Keyboard navigation
   useEffect(() => {
     if (!show) return
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        close()
-        return
-      }
+      if (e.key === 'Escape') { close(); return }
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setSelectedIndex((prev) => Math.min(prev + 1, results.length - 1))
@@ -125,15 +239,33 @@ export function GlobalSearch() {
     return () => document.removeEventListener('keydown', handleKeyDown, { capture: true })
   }, [show, results, selectedIndex, close, selectResult])
 
+  const sectionLabel = useMemo(() => ({
+    panel: 'Open Panels',
+    terminal: 'Terminal Output',
+    file: 'Workspace Files',
+  } as Record<ResultKind, string>), [])
+
+  // Group results by kind for rendering while preserving global order.
+  const grouped = useMemo(() => {
+    const seen = new Set<ResultKind>()
+    const sections: { kind: ResultKind; items: SearchResult[] }[] = []
+    for (const r of results) {
+      if (!seen.has(r.kind)) { seen.add(r.kind); sections.push({ kind: r.kind, items: [] }) }
+      sections.find((s) => s.kind === r.kind)!.items.push(r)
+    }
+    return sections
+  }, [results])
+
   if (!show) return null
 
+  let flatIndex = 0
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-black/40"
       onClick={close}
     >
       <div
-        className="w-[600px] max-h-[500px] rounded-xl overflow-hidden flex flex-col bg-surface-4 border border-subtle"
+        className="w-[640px] max-h-[520px] rounded-xl overflow-hidden flex flex-col bg-surface-4 border border-subtle"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-3">
@@ -143,36 +275,41 @@ export function GlobalSearch() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="w-full bg-surface-3 text-primary text-sm px-3 py-2 rounded-lg border border-subtle outline-none focus:border-blue-500/50"
-            placeholder="Search in open editors..."
+            placeholder="Search files, terminals, panels…"
           />
         </div>
 
         {results.length > 0 && (
           <div className="flex-1 overflow-y-auto border-t border-subtle">
-            {results.map((result, i) => (
-              <div
-                key={`${result.filePath}:${result.line}`}
-                className={`px-3 py-2 cursor-pointer text-sm ${
-                  i === selectedIndex ? 'bg-blue-600/20' : 'hover:bg-hover'
-                }`}
-                onClick={() => selectResult(result)}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-muted text-xs font-mono">
-                    {result.filePath.split('/').pop()}:{result.line}
-                  </span>
+            {grouped.map((section) => (
+              <div key={section.kind}>
+                <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-muted">
+                  {sectionLabel[section.kind]}
                 </div>
-                <div className="text-primary text-xs font-mono truncate mt-0.5">
-                  {result.text}
-                </div>
+                {section.items.map((r) => {
+                  const thisIndex = flatIndex++
+                  const isSelected = thisIndex === selectedIndex
+                  return (
+                    <div
+                      key={r.key}
+                      className={`px-3 py-1.5 cursor-pointer text-sm ${
+                        isSelected ? 'bg-blue-600/20' : 'hover:bg-hover'
+                      }`}
+                      onClick={() => selectResult(r)}
+                    >
+                      <div className="text-primary text-xs font-mono truncate">{r.primary}</div>
+                      <div className="text-muted text-[11px] font-mono truncate mt-0.5">{r.secondary}</div>
+                    </div>
+                  )
+                })}
               </div>
             ))}
           </div>
         )}
 
-        {query.length >= 2 && results.length === 0 && (
+        {query.length >= 2 && results.length === 0 && !busy && (
           <div className="px-3 py-4 text-sm text-muted text-center border-t border-subtle">
-            No results found
+            No results
           </div>
         )}
       </div>

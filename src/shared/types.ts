@@ -525,7 +525,7 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutAction, StoredShortcut> = {
   saveFile: storedShortcut('s', { command: true }),
   zoomToFit: storedShortcut('1', { command: true }),
   autoLayout: storedShortcut('l', { command: true, shift: true }),
-  globalSearch: storedShortcut('h', { command: true, shift: true }),
+  globalSearch: storedShortcut('f', { command: true, shift: true }),
   undo: storedShortcut('z', { command: true }),
   redo: storedShortcut('z', { command: true, shift: true }),
   deleteNode: storedShortcut('Backspace', { command: true }),

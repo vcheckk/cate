@@ -150,6 +150,9 @@ export interface PanelState {
   url?: string
   /** When set, EditorPanel renders as a Monaco diff editor. */
   diffMode?: 'staged' | 'working'
+  /** Unsaved buffer content for scratch (no-filePath) editors. Persisted so
+   *  content survives canvas switches and app restarts. */
+  unsavedContent?: string
 }
 
 // -----------------------------------------------------------------------------
@@ -602,6 +605,8 @@ export interface NodeSnapshot {
   workingDirectory?: string | null
   ptyId?: string
   regionId?: string
+  /** Unsaved scratch-editor content, restored on load. */
+  unsavedContent?: string
 }
 
 export interface SessionSnapshot {

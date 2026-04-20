@@ -5,7 +5,8 @@
 // =============================================================================
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react'
-import { MagnifyingGlass } from '@phosphor-icons/react'
+import { MagnifyingGlass, FileText, Terminal, Globe, Folder, Stack, GitBranch, Square } from '@phosphor-icons/react'
+import type { PanelType } from '../../shared/types'
 import { useUIStore } from '../stores/uiStore'
 import { useAppStore } from '../stores/appStore'
 import { useCanvasStoreApi } from '../stores/CanvasStoreContext'
@@ -36,6 +37,7 @@ interface FileResult extends BaseResult {
 interface PanelResult extends BaseResult {
   kind: 'panel'
   panelId: string
+  panelType: PanelType
   nodeId?: string
 }
 
@@ -104,6 +106,7 @@ export function GlobalSearch() {
         secondary: fp || url || panel.type,
         score: 2000 + recency,
         panelId: panel.id,
+        panelType: panel.type,
         nodeId: n?.id,
       })
     }
@@ -266,26 +269,27 @@ export function GlobalSearch() {
       onClick={close}
     >
       <div
-        className="w-[640px] max-h-[520px] rounded-2xl overflow-hidden flex flex-col bg-surface-4/85 backdrop-blur-xl border border-subtle shadow-2xl"
+        className="w-[640px] max-h-[560px] rounded-3xl overflow-hidden flex flex-col bg-surface-4/85 backdrop-blur-2xl border border-white/20 shadow-[0_24px_64px_rgba(0,0,0,0.5)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3 px-4 h-12">
-          <MagnifyingGlass size={18} className="text-muted shrink-0" />
+        <div className="flex items-center gap-3 px-5 h-14">
+          <MagnifyingGlass size={20} className="text-muted shrink-0" weight="bold" />
           <input
             autoFocus
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="flex-1 bg-transparent text-primary text-base outline-none placeholder:text-muted"
+            className="flex-1 bg-transparent text-primary text-base font-medium outline-none placeholder:text-muted placeholder:font-normal"
             placeholder="Search files, terminals, panels…"
           />
         </div>
 
         {results.length > 0 && (
-          <div className="flex-1 overflow-y-auto border-t border-subtle">
-            {grouped.map((section) => (
+          <div className="flex-1 overflow-y-auto pb-2">
+            {grouped.map((section, si) => (
               <div key={section.kind}>
-                <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-muted">
+                {si > 0 && <div className="mx-5 my-1 border-t border-white/10" />}
+                <div className="px-5 pt-2 pb-1 text-[10px] uppercase tracking-wider text-muted font-semibold">
                   {sectionLabel[section.kind]}
                 </div>
                 {section.items.map((r) => {
@@ -294,13 +298,16 @@ export function GlobalSearch() {
                   return (
                     <div
                       key={r.key}
-                      className={`px-3 py-1.5 cursor-pointer text-sm ${
-                        isSelected ? 'bg-blue-600/20' : 'hover:bg-hover'
+                      className={`flex items-center gap-3 mx-2 px-3 py-2 cursor-pointer rounded-lg ${
+                        isSelected ? 'bg-blue-600/30' : 'hover:bg-white/5'
                       }`}
                       onClick={() => selectResult(r)}
                     >
-                      <div className="text-primary text-xs font-mono truncate">{r.primary}</div>
-                      <div className="text-muted text-[11px] font-mono truncate mt-0.5">{r.secondary}</div>
+                      <ResultIcon result={r} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-primary text-sm font-medium truncate">{r.primary}</div>
+                        <div className="text-muted text-xs truncate mt-0.5">{r.secondary}</div>
+                      </div>
                     </div>
                   )
                 })}
@@ -310,11 +317,34 @@ export function GlobalSearch() {
         )}
 
         {query.length >= 2 && results.length === 0 && !busy && (
-          <div className="px-3 py-4 text-sm text-muted text-center border-t border-subtle">
+          <div className="px-5 py-5 text-sm text-muted text-center border-t border-white/10">
             No results
           </div>
         )}
       </div>
     </div>
   )
+}
+
+// -----------------------------------------------------------------------------
+// Result icon — type-aware glyph in a tinted square tile
+// -----------------------------------------------------------------------------
+
+function ResultIcon({ result }: { result: SearchResult }) {
+  const tile = 'w-8 h-8 rounded-md flex items-center justify-center shrink-0'
+  if (result.kind === 'file') {
+    return <div className={`${tile} bg-amber-500/15 text-amber-400`}><FileText size={16} weight="bold" /></div>
+  }
+  if (result.kind === 'terminal') {
+    return <div className={`${tile} bg-emerald-500/15 text-emerald-400`}><Terminal size={16} weight="bold" /></div>
+  }
+  // panel — type-specific
+  const { panelType } = result
+  if (panelType === 'terminal') return <div className={`${tile} bg-emerald-500/15 text-emerald-400`}><Terminal size={16} weight="bold" /></div>
+  if (panelType === 'browser')  return <div className={`${tile} bg-sky-500/15 text-sky-400`}><Globe size={16} weight="bold" /></div>
+  if (panelType === 'editor')   return <div className={`${tile} bg-orange-500/15 text-orange-400`}><FileText size={16} weight="bold" /></div>
+  if (panelType === 'git')      return <div className={`${tile} bg-red-500/15 text-red-400`}><GitBranch size={16} weight="bold" /></div>
+  if (panelType === 'fileExplorer') return <div className={`${tile} bg-cyan-500/15 text-cyan-400`}><Folder size={16} weight="bold" /></div>
+  if (panelType === 'projectList')  return <div className={`${tile} bg-yellow-500/15 text-yellow-400`}><Stack size={16} weight="bold" /></div>
+  return <div className={`${tile} bg-violet-500/15 text-violet-400`}><Square size={16} weight="bold" /></div>
 }

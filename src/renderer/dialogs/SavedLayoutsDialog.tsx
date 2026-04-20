@@ -4,7 +4,7 @@
 // =============================================================================
 
 import React, { useCallback, useEffect, useState } from 'react'
-import { X, FloppyDisk, Trash, FolderOpen } from '@phosphor-icons/react'
+import { FloppyDisk, Trash, FolderOpen, SquaresFour } from '@phosphor-icons/react'
 import { useUIStore } from '../stores/uiStore'
 import { useAppStore } from '../stores/appStore'
 import { useCanvasStoreApi } from '../stores/CanvasStoreContext'
@@ -125,91 +125,102 @@ export function SavedLayoutsDialog() {
     }
   }, [selected, refresh])
 
+  // Escape to close
+  useEffect(() => {
+    if (!show) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); close() }
+    }
+    document.addEventListener('keydown', handler, { capture: true })
+    return () => document.removeEventListener('keydown', handler, { capture: true })
+  }, [show, close])
+
   if (!show) return null
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      className="fixed inset-0 z-50 flex items-start justify-center pt-40 bg-black/40"
       onClick={close}
     >
       <div
-        className="w-[520px] max-h-[600px] rounded-xl overflow-hidden flex flex-col bg-surface-4 border border-subtle shadow-2xl"
+        className="w-[640px] max-h-[560px] rounded-3xl overflow-hidden flex flex-col bg-surface-4/85 backdrop-blur-2xl border border-white/20 shadow-[0_24px_64px_rgba(0,0,0,0.5)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-subtle">
-          <div className="text-primary text-sm font-medium">Saved Layouts</div>
-          <button
-            onClick={close}
-            className="text-muted hover:text-primary transition-colors p-1 rounded hover:bg-hover"
-            title="Close"
-          >
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="p-3 border-b border-subtle flex gap-2">
+        {/* Save input — primary action, mirrors the search-bar treatment */}
+        <div className="flex items-center gap-3 px-5 h-14">
+          <FloppyDisk size={20} className="text-muted shrink-0" weight="bold" />
           <input
+            autoFocus
             type="text"
             value={saveName}
             onChange={(e) => setSaveName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') handleSave() }}
-            className="flex-1 bg-surface-3 text-primary text-sm px-3 py-2 rounded-lg border border-subtle outline-none focus:border-blue-500/50"
+            className="flex-1 bg-transparent text-primary text-base font-medium outline-none placeholder:text-muted placeholder:font-normal"
             placeholder="Save current canvas as…"
             disabled={busy}
           />
           <button
             onClick={handleSave}
             disabled={busy || !saveName.trim()}
-            className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-blue-600/80 text-white hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="text-xs font-medium px-3 py-1.5 rounded-full bg-blue-600/80 text-white hover:bg-blue-600 disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
           >
-            <FloppyDisk size={14} />
             Save
           </button>
         </div>
 
         {error && (
-          <div className="px-4 py-2 text-xs text-red-400 bg-red-600/10 border-b border-subtle">
+          <div className="mx-2 mb-2 px-3 py-2 text-xs text-red-400 bg-red-600/10 rounded-lg">
             {error}
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto">
+        {/* Layout list */}
+        <div className="flex-1 overflow-y-auto pb-2">
           {names.length === 0 ? (
-            <div className="px-4 py-10 text-sm text-muted text-center">
-              No saved layouts yet.
+            <div className="px-5 py-8 text-sm text-muted text-center">
+              No saved layouts yet. Type a name above and hit Enter.
             </div>
           ) : (
-            names.map((name) => (
-              <div
-                key={name}
-                className={`group flex items-center justify-between gap-2 px-4 py-2 text-sm cursor-pointer ${
-                  selected === name ? 'bg-blue-600/20' : 'hover:bg-hover'
-                }`}
-                onClick={() => setSelected(name)}
-                onDoubleClick={() => handleLoad(name)}
-              >
-                <span className="text-primary truncate">{name}</span>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleLoad(name) }}
-                    disabled={busy}
-                    className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-surface-6 hover:bg-hover text-primary"
-                    title="Load"
+            <>
+              <div className="mx-5 my-1 border-t border-white/10" />
+              {names.map((name) => {
+                const isSelected = selected === name
+                return (
+                  <div
+                    key={name}
+                    className={`group flex items-center gap-3 mx-2 px-3 py-2 cursor-pointer rounded-lg ${
+                      isSelected ? 'bg-blue-600/30' : 'hover:bg-white/5'
+                    }`}
+                    onClick={() => setSelected(name)}
+                    onDoubleClick={() => handleLoad(name)}
                   >
-                    <FolderOpen size={12} />
-                    Load
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDelete(name) }}
-                    disabled={busy}
-                    className="flex items-center gap-1 text-xs px-2 py-1 rounded text-red-400 hover:bg-red-600/20"
-                    title="Delete"
-                  >
-                    <Trash size={12} />
-                  </button>
-                </div>
-              </div>
-            ))
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-violet-500/15 text-violet-400">
+                      <SquaresFour size={16} weight="bold" />
+                    </div>
+                    <span className="flex-1 text-primary text-sm font-medium truncate">{name}</span>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleLoad(name) }}
+                        disabled={busy}
+                        className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-primary"
+                        title="Load"
+                      >
+                        <FolderOpen size={12} />
+                        Load
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDelete(name) }}
+                        disabled={busy}
+                        className="p-1.5 rounded-md text-muted hover:text-red-400 hover:bg-red-600/10"
+                        title="Delete"
+                      >
+                        <Trash size={12} />
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </>
           )}
         </div>
       </div>

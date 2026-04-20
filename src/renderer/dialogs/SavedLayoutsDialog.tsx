@@ -6,7 +6,13 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { FloppyDisk, Trash, FolderOpen, SquaresFour } from '@phosphor-icons/react'
 import { useUIStore } from '../stores/uiStore'
-import { useAppStore, getWorkspaceCanvasStore } from '../stores/appStore'
+import {
+  useAppStore,
+  getWorkspaceCanvasStore,
+  getWorkspaceCanvasPanelId,
+  ensureCanvasOpsForPanel,
+  setActiveCanvasPanelId,
+} from '../stores/appStore'
 import { useCanvasStoreApi } from '../stores/CanvasStoreContext'
 import log from '../lib/logger'
 
@@ -95,6 +101,16 @@ export function SavedLayoutsDialog() {
       // that owns the dock center zone. Recreate it before we start adding
       // nodes so the fresh canvas exists to receive them.
       app.ensureCenterCanvas(wsId)
+      // The React CanvasPanel that would normally register the canvas's
+      // store + mark it active hasn't mounted yet. Register them
+      // synchronously so create* calls below resolve to the *new* canvas,
+      // not the disposed one — otherwise the Welcome screen would show
+      // because the new canvas ends up with zero nodes.
+      const newCanvasId = getWorkspaceCanvasPanelId(wsId)
+      if (newCanvasId) {
+        ensureCanvasOpsForPanel(newCanvasId)
+        setActiveCanvasPanelId(newCanvasId)
+      }
       for (const node of snap.nodes ?? []) {
         switch (node.panelType) {
           case 'terminal': useAppStore.getState().createTerminal(wsId, undefined, node.origin); break
